@@ -67107,92 +67107,84 @@ var configureCommitlintIntegration = async (force = false) => {
   spin.stop(`Done - please review contents of ${COMMITLINT_LLM_CONFIG_PATH}`);
 };
 
-// src/utils/removeConventionalCommitWord.ts
-function removeConventionalCommitWord(message) {
-  return message.replace(/^(fix|feat)\((.+?)\):/, "($2):");
-}
-
 // src/prompts.ts
 var config4 = getConfig();
 var translation3 = i18n[config4.OCO_LANGUAGE || "en"];
 var IDENTITY = "You are to act as an author of a commit message in git.";
-var GITMOJI_HELP = `Use GitMoji convention to preface the commit. Here are some help to choose the right emoji (emoji, description): 
-\u{1F41B}, Fix a bug; 
-\u2728, Introduce new features; 
-\u{1F4DD}, Add or update documentation; 
-\u{1F680}, Deploy stuff; 
-\u2705, Add, update, or pass tests; 
-\u267B\uFE0F, Refactor code; 
-\u2B06\uFE0F, Upgrade dependencies; 
-\u{1F527}, Add or update configuration files; 
-\u{1F310}, Internationalization and localization; 
-\u{1F4A1}, Add or update comments in source code;`;
-var FULL_GITMOJI_SPEC = `${GITMOJI_HELP}
-\u{1F3A8}, Improve structure / format of the code; 
-\u26A1\uFE0F, Improve performance; 
-\u{1F525}, Remove code or files; 
-\u{1F691}\uFE0F, Critical hotfix; 
-\u{1F484}, Add or update the UI and style files; 
-\u{1F389}, Begin a project; 
-\u{1F512}\uFE0F, Fix security issues; 
-\u{1F510}, Add or update secrets; 
-\u{1F516}, Release / Version tags; 
-\u{1F6A8}, Fix compiler / linter warnings; 
-\u{1F6A7}, Work in progress; 
-\u{1F49A}, Fix CI Build; 
-\u2B07\uFE0F, Downgrade dependencies; 
-\u{1F4CC}, Pin dependencies to specific versions; 
-\u{1F477}, Add or update CI build system; 
-\u{1F4C8}, Add or update analytics or track code; 
-\u2795, Add a dependency; 
-\u2796, Remove a dependency; 
-\u{1F528}, Add or update development scripts; 
-\u270F\uFE0F, Fix typos; 
-\u{1F4A9}, Write bad code that needs to be improved; 
-\u23EA\uFE0F, Revert changes; 
-\u{1F500}, Merge branches; 
-\u{1F4E6}\uFE0F, Add or update compiled files or packages; 
-\u{1F47D}\uFE0F, Update code due to external API changes; 
-\u{1F69A}, Move or rename resources (e.g.: files, paths, routes); 
-\u{1F4C4}, Add or update license; 
-\u{1F4A5}, Introduce breaking changes; 
-\u{1F371}, Add or update assets; 
-\u267F\uFE0F, Improve accessibility; 
-\u{1F37B}, Write code drunkenly; 
-\u{1F4AC}, Add or update text and literals; 
-\u{1F5C3}\uFE0F, Perform database related changes; 
-\u{1F50A}, Add or update logs; 
-\u{1F507}, Remove logs; 
-\u{1F465}, Add or update contributor(s); 
-\u{1F6B8}, Improve user experience / usability; 
-\u{1F3D7}\uFE0F, Make architectural changes; 
-\u{1F4F1}, Work on responsive design; 
-\u{1F921}, Mock things; 
-\u{1F95A}, Add or update an easter egg; 
-\u{1F648}, Add or update a .gitignore file; 
-\u{1F4F8}, Add or update snapshots; 
-\u2697\uFE0F, Perform experiments; 
-\u{1F50D}\uFE0F, Improve SEO; 
-\u{1F3F7}\uFE0F, Add or update types; 
-\u{1F331}, Add or update seed files; 
-\u{1F6A9}, Add, update, or remove feature flags; 
-\u{1F945}, Catch errors; 
-\u{1F4AB}, Add or update animations and transitions; 
-\u{1F5D1}\uFE0F, Deprecate code that needs to be cleaned up; 
-\u{1F6C2}, Work on code related to authorization, roles and permissions; 
-\u{1FA79}, Simple fix for a non-critical issue; 
-\u{1F9D0}, Data exploration/inspection; 
-\u26B0\uFE0F, Remove dead code; 
-\u{1F9EA}, Add a failing test; 
-\u{1F454}, Add or update business logic; 
-\u{1FA7A}, Add or update healthcheck; 
-\u{1F9F1}, Infrastructure related changes; 
-\u{1F9D1}\u200D\u{1F4BB}, Improve developer experience; 
-\u{1F4B8}, Add sponsorships or money related infrastructure; 
-\u{1F9F5}, Add or update code related to multithreading or concurrency; 
-\u{1F9BA}, Add or update code related to validation.`;
-var CONVENTIONAL_COMMIT_KEYWORDS = "Do not preface the commit with anything, except for the conventional commit keywords: fix, feat, build, chore, ci, docs, style, refactor, perf, test.";
-var getCommitConvention = (fullGitMojiSpec) => config4.OCO_EMOJI ? fullGitMojiSpec ? FULL_GITMOJI_SPEC : GITMOJI_HELP : CONVENTIONAL_COMMIT_KEYWORDS;
+var COMMIT_GUIDELINES = `Follow these commit message guidelines:
+
+## Format Structure
+type(scope): description
+- Length: \u2264 50 characters total
+- Case: lowercase except proper nouns
+- Voice: imperative mood ("add" not "adds" or "added")
+- Punctuation: no period at end
+- Style: concise, direct, actionable
+
+## Type Classification (Priority Order)
+### Primary Types:
+- feat: new functionality, components, or user-facing features
+- fix: bug fixes, error handling, or corrections
+- refactor: code restructuring without behavior changes
+- perf: performance optimizations or improvements
+- chore: maintenance, dependencies, tooling, configuration, or broad non-source code changes
+
+### Secondary Types:
+- deps, fix(deps), chore(deps), build(deps): dependency additions, upgrades, or removals
+- i18n, locale, translation: internationalization and localization changes
+- style, format: formatting, whitespace, linting fixes
+- security: vulnerability fixes or security improvements
+- revert: reverting previous commits
+- build: build system or tooling changes
+- compat: compatibility updates
+- test: adding/modifying tests without production code changes
+- ci: CI/CD pipeline, build, or deployment configuration
+- docs: documentation changes only, either markdown or code comments
+- deprecated: deprecation notices
+
+## Scope Determination Rules
+### For src/ changes:
+- Use specific module/component name: auth, api, ui, core, utils
+- File-based: parser, validator, router, middleware
+- Feature-based: login, dashboard, notifications
+
+### For non-src/ changes:
+- Dependencies: deps
+- Configuration: config
+- Build/tooling: build, ci
+- Documentation: docs
+- Root files: omit scope
+
+### Scope Selection Priority:
+1. Most specific affected component
+2. If multiple components: use parent module or omit scope
+3. If unclear: omit scope rather than guess
+
+## Decision Tree
+1. Is this a dependency change? -> chore(deps): action dependency package-name
+2. Is this outside src/ directory? -> chore(scope): action
+3. Is this adding new functionality in src/? -> feat(scope): action
+4. Is this fixing a bug/error in src/? -> fix(scope): action
+5. Is this restructuring code without changing behavior? -> refactor(scope): action
+6. Otherwise, use most specific type from list
+
+## Description Writing Rules
+### DO:
+- Start with action verb: "add", "remove", "update", "fix", "refactor"
+- Be specific: "add user authentication" not "add auth stuff"
+- Use present tense imperative: "implement" not "implemented"
+- Focus on WHAT changed, not WHY
+
+### DON'T:
+- Use vague terms: "update things", "fix stuff", "improve code"
+- Add explanations: "fix bug (was causing crashes)"
+- Include ticket numbers: "fix USER-123"
+- Use gerunds: "adding" instead of "add"
+
+## Edge Cases
+- Multiple types in one commit: Choose the most significant change. If equal significance, prefer: feat > fix > refactor > chore
+- Multiple scopes affected: Use parent scope if logical grouping exists, omit scope if no clear parent`;
+var getCommitConvention = () => COMMIT_GUIDELINES;
 var getDescriptionInstruction = () => config4.OCO_DESCRIPTION ? `Add a short description of WHY the changes are done after the commit message. Don't start it with "This commit", just describe the changes.` : "Don't add any descriptions to the commit, only commit message.";
 var getOneLineCommitInstruction = () => config4.OCO_ONE_LINE_COMMIT ? "Craft a concise, single sentence, commit message that encapsulates all changes made, with an emphasis on the primary updates. If the modifications share a common theme or scope, mention it succinctly; otherwise, leave the scope out to maintain focus. The goal is to provide a clear and unified overview of the changes in one single message." : "";
 var getScopeInstruction = () => config4.OCO_OMIT_SCOPE ? "Do not include a scope in the commit message format. Use the format: <type>: <subject>" : "";
@@ -67203,13 +67195,12 @@ Consider this context when generating the commit message, incorporating relevant
   }
   return "";
 };
-var INIT_MAIN_PROMPT2 = (language, fullGitMojiSpec, context) => ({
+var INIT_MAIN_PROMPT2 = (language, context) => ({
   role: "system",
   content: (() => {
-    const commitConvention = fullGitMojiSpec ? "GitMoji specification" : "Conventional Commit Convention";
-    const missionStatement = `${IDENTITY} Your mission is to create clean and comprehensive commit messages as per the ${commitConvention} and explain WHAT were the changes and mainly WHY the changes were done.`;
+    const missionStatement = `${IDENTITY} Your mission is to create clean and comprehensive commit messages following the Conventional Commit Convention and explain WHAT were the changes and mainly WHY the changes were done.`;
     const diffInstruction = "I'll send you an output of 'git diff --staged' command, and you are to convert it into a commit message.";
-    const conventionGuidelines = getCommitConvention(fullGitMojiSpec);
+    const conventionGuidelines = getCommitConvention();
     const descriptionGuideline = getDescriptionInstruction();
     const oneLineCommitGuideline = getOneLineCommitInstruction();
     const scopeInstruction = getScopeInstruction();
@@ -67234,37 +67225,29 @@ var INIT_DIFF_PROMPT = {
     @@ -10,7 +10,7 @@
     import {
         initWinstonLogger();
-        
+
         const app = express();
         -const port = 7799;
         +const PORT = 7799;
-        
+
         app.use(express.json());
-        
+
         @@ -34,6 +34,6 @@
         app.use((_, res, next) => {
             // ROUTES
             app.use(PROTECTED_ROUTER_URL, protectedRouter);
-            
+
             -app.listen(port, () => {
                 -  console.log(\`Server listening on port \${port}\`);
                 +app.listen(process.env.PORT || PORT, () => {
                     +  console.log(\`Server listening on port \${PORT}\`);
                 });`
 };
-var COMMIT_TYPES = {
-  fix: "\u{1F41B}",
-  feat: "\u2728"
-};
-var generateCommitString = (type2, message) => {
-  const cleanMessage = removeConventionalCommitWord(message);
-  return config4.OCO_EMOJI ? `${COMMIT_TYPES[type2]} ${cleanMessage}` : message;
-};
 var getConsistencyContent = (translation4) => {
   const fixMessage = config4.OCO_OMIT_SCOPE && translation4.commitFixOmitScope ? translation4.commitFixOmitScope : translation4.commitFix;
   const featMessage = config4.OCO_OMIT_SCOPE && translation4.commitFeatOmitScope ? translation4.commitFeatOmitScope : translation4.commitFeat;
-  const fix = generateCommitString("fix", fixMessage);
-  const feat = config4.OCO_ONE_LINE_COMMIT ? "" : generateCommitString("feat", featMessage);
+  const fix = fixMessage;
+  const feat = config4.OCO_ONE_LINE_COMMIT ? "" : featMessage;
   const description = config4.OCO_DESCRIPTION ? translation4.commitDescription : "";
   return [fix, feat, description].filter(Boolean).join("\n");
 };
@@ -67272,7 +67255,7 @@ var INIT_CONSISTENCY_PROMPT = (translation4) => ({
   role: "assistant",
   content: getConsistencyContent(translation4)
 });
-var getMainCommitPrompt = async (fullGitMojiSpec, context) => {
+var getMainCommitPrompt = async (context) => {
   switch (config4.OCO_PROMPT_MODULE) {
     case "@commitlint":
       if (!await commitlintLLMConfigExists()) {
@@ -67294,7 +67277,7 @@ var getMainCommitPrompt = async (fullGitMojiSpec, context) => {
       ];
     default:
       return [
-        INIT_MAIN_PROMPT2(translation3.localLanguage, fullGitMojiSpec, context),
+        INIT_MAIN_PROMPT2(translation3.localLanguage, context),
         INIT_DIFF_PROMPT,
         INIT_CONSISTENCY_PROMPT(translation3)
       ];
@@ -67321,11 +67304,8 @@ function mergeDiffs(arr, maxStringLength) {
 var config5 = getConfig();
 var MAX_TOKENS_INPUT = config5.OCO_TOKENS_MAX_INPUT;
 var MAX_TOKENS_OUTPUT = config5.OCO_TOKENS_MAX_OUTPUT;
-var generateCommitMessageChatCompletionPrompt = async (diff, fullGitMojiSpec, context) => {
-  const INIT_MESSAGES_PROMPT = await getMainCommitPrompt(
-    fullGitMojiSpec,
-    context
-  );
+var generateCommitMessageChatCompletionPrompt = async (diff, context) => {
+  const INIT_MESSAGES_PROMPT = await getMainCommitPrompt(context);
   const chatContextAsCompletionRequest = [...INIT_MESSAGES_PROMPT];
   chatContextAsCompletionRequest.push({
     role: "user",
@@ -67341,12 +67321,9 @@ var GenerateCommitMessageErrorEnum = ((GenerateCommitMessageErrorEnum2) => {
   return GenerateCommitMessageErrorEnum2;
 })(GenerateCommitMessageErrorEnum || {});
 var ADJUSTMENT_FACTOR = 20;
-var generateCommitMessageByDiff = async (diff, fullGitMojiSpec = false, context = "") => {
+var generateCommitMessageByDiff = async (diff, context = "") => {
   try {
-    const INIT_MESSAGES_PROMPT = await getMainCommitPrompt(
-      fullGitMojiSpec,
-      context
-    );
+    const INIT_MESSAGES_PROMPT = await getMainCommitPrompt(context);
     const INIT_MESSAGES_PROMPT_LENGTH = INIT_MESSAGES_PROMPT.map(
       (msg) => tokenCount(msg.content) + 4
     ).reduce((a4, b7) => a4 + b7, 0);
@@ -67354,8 +67331,7 @@ var generateCommitMessageByDiff = async (diff, fullGitMojiSpec = false, context 
     if (tokenCount(diff) >= MAX_REQUEST_TOKENS) {
       const commitMessagePromises = await getCommitMsgsPromisesFromFileDiffs(
         diff,
-        MAX_REQUEST_TOKENS,
-        fullGitMojiSpec
+        MAX_REQUEST_TOKENS
       );
       const commitMessages = [];
       for (const promise of commitMessagePromises) {
@@ -67366,7 +67342,6 @@ var generateCommitMessageByDiff = async (diff, fullGitMojiSpec = false, context 
     }
     const messages = await generateCommitMessageChatCompletionPrompt(
       diff,
-      fullGitMojiSpec,
       context
     );
     const engine = getEngine();
@@ -67378,7 +67353,7 @@ var generateCommitMessageByDiff = async (diff, fullGitMojiSpec = false, context 
     throw error;
   }
 };
-function getMessagesPromisesByChangesInFile(fileDiff, separator, maxChangeLength, fullGitMojiSpec) {
+function getMessagesPromisesByChangesInFile(fileDiff, separator, maxChangeLength) {
   const hunkHeaderSeparator = "@@ ";
   const [fileHeader, ...fileDiffByLines] = fileDiff.split(hunkHeaderSeparator);
   const mergedChanges = mergeDiffs(
@@ -67400,7 +67375,7 @@ function getMessagesPromisesByChangesInFile(fileDiff, separator, maxChangeLength
     async (lineDiff) => {
       const messages = await generateCommitMessageChatCompletionPrompt(
         separator + lineDiff,
-        fullGitMojiSpec
+        ""
       );
       return engine.generateCommitMessage(messages);
     }
@@ -67432,7 +67407,7 @@ function splitDiff(diff, maxChangeLength) {
   }
   return splitDiffs;
 }
-var getCommitMsgsPromisesFromFileDiffs = async (diff, maxDiffLength, fullGitMojiSpec) => {
+var getCommitMsgsPromisesFromFileDiffs = async (diff, maxDiffLength) => {
   const separator = "diff --git ";
   const diffByFiles = diff.split(separator).slice(1);
   const mergedFilesDiffs = mergeDiffs(diffByFiles, maxDiffLength);
@@ -67442,14 +67417,13 @@ var getCommitMsgsPromisesFromFileDiffs = async (diff, maxDiffLength, fullGitMoji
       const messagesPromises = getMessagesPromisesByChangesInFile(
         fileDiff,
         separator,
-        maxDiffLength,
-        fullGitMojiSpec
+        maxDiffLength
       );
       commitMessagePromises.push(...messagesPromises);
     } else {
       const messages = await generateCommitMessageChatCompletionPrompt(
         separator + fileDiff,
-        fullGitMojiSpec
+        ""
       );
       const engine = getEngine();
       commitMessagePromises.push(engine.generateCommitMessage(messages));
