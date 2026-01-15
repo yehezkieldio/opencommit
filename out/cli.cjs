@@ -67111,6 +67111,55 @@ var configureCommitlintIntegration = async (force = false) => {
 var config4 = getConfig();
 var translation3 = i18n[config4.OCO_LANGUAGE || "en"];
 var IDENTITY = "You are to act as an author of a commit message in git.";
+var SINGLE_MESSAGE_CONSTRAINT = `
+## Critical Output Rules:
+- You MUST generate exactly ONE commit message
+- NEVER output multiple commit headers (e.g., "feat: X\\n\\nfix: Y" is INVALID)
+- If multiple things changed, pick the most significant type
+- Use the commit body to mention secondary changes if needed
+- When in doubt, prefer: feat > fix > refactor > chore`;
+var SUMMARY_PROMPT = {
+  role: "system",
+  content: `You are a code analyst. Analyze the following git diff and extract the key technical changes.
+
+## Instructions:
+- Return a concise bulleted list of changes (3-5 items max)
+- Focus on WHAT changed, not WHY
+- Include file names where relevant
+- Do NOT write a commit message or commit header
+- Do NOT use prefixes like "feat:", "fix:", etc.
+- Be technical and specific
+- Keep each bullet point to one line
+
+## Example Output:
+- Added user authentication middleware in \`auth.ts\`
+- Updated API endpoint path from /v1 to /v2 in \`routes.ts\`
+- Fixed null pointer exception in error handler
+- Removed deprecated logging utility`
+};
+var getSynthesisPrompt = (language, context) => ({
+  role: "system",
+  content: (() => {
+    const mission = `${IDENTITY}
+
+You will receive a summary of all changes across multiple files/chunks in a git commit.
+Your task is to write **exactly ONE** commit message that covers all changes.`;
+    const conventionGuidelines = COMMIT_GUIDELINES;
+    const descriptionGuideline = getDescriptionInstruction();
+    const oneLineCommitGuideline = getOneLineCommitInstruction();
+    const scopeInstruction = getScopeInstruction();
+    const generalGuidelines = `Use the present tense. Lines must not be longer than 74 characters. Use ${language} for the commit message.`;
+    const userInputContext = userInputCodeContext(context);
+    return `${mission}
+${conventionGuidelines}
+${SINGLE_MESSAGE_CONSTRAINT}
+${descriptionGuideline}
+${oneLineCommitGuideline}
+${scopeInstruction}
+${generalGuidelines}
+${userInputContext}`;
+  })()
+});
 var COMMIT_GUIDELINES = `Follow these commit message guidelines:
 
 ## Format Structure
@@ -67209,6 +67258,7 @@ var INIT_MAIN_PROMPT2 = (language, context) => ({
     return `${missionStatement}
 ${diffInstruction}
 ${conventionGuidelines}
+${SINGLE_MESSAGE_CONSTRAINT}
 ${descriptionGuideline}
 ${oneLineCommitGuideline}
 ${scopeInstruction}
@@ -67284,6 +67334,19 @@ var getMainCommitPrompt = async (context) => {
   }
 };
 
+// src/utils/extractFileName.ts
+function extractFileName(fileDiff) {
+  const match = fileDiff.match(/^a\/(.+?)\s+b\//);
+  if (match) {
+    return match[1];
+  }
+  const plusMatch = fileDiff.match(/\+\+\+ b\/(.+)/);
+  if (plusMatch) {
+    return plusMatch[1];
+  }
+  return "unknown";
+}
+
 // src/utils/mergeDiffs.ts
 function mergeDiffs(arr, maxStringLength) {
   const mergedArr = [];
@@ -67304,15 +67367,6 @@ function mergeDiffs(arr, maxStringLength) {
 var config5 = getConfig();
 var MAX_TOKENS_INPUT = config5.OCO_TOKENS_MAX_INPUT;
 var MAX_TOKENS_OUTPUT = config5.OCO_TOKENS_MAX_OUTPUT;
-var generateCommitMessageChatCompletionPrompt = async (diff, context) => {
-  const INIT_MESSAGES_PROMPT = await getMainCommitPrompt(context);
-  const chatContextAsCompletionRequest = [...INIT_MESSAGES_PROMPT];
-  chatContextAsCompletionRequest.push({
-    role: "user",
-    content: diff
-  });
-  return chatContextAsCompletionRequest;
-};
 var GenerateCommitMessageErrorEnum = ((GenerateCommitMessageErrorEnum2) => {
   GenerateCommitMessageErrorEnum2["tooMuchTokens"] = "TOO_MUCH_TOKENS";
   GenerateCommitMessageErrorEnum2["internalError"] = "INTERNAL_ERROR";
@@ -67321,119 +67375,229 @@ var GenerateCommitMessageErrorEnum = ((GenerateCommitMessageErrorEnum2) => {
   return GenerateCommitMessageErrorEnum2;
 })(GenerateCommitMessageErrorEnum || {});
 var ADJUSTMENT_FACTOR = 20;
+var DIFF_SEPARATOR = "diff --git ";
+var RATE_LIMIT_DELAY_MS = 1e3;
+var generateCommitMessageChatCompletionPrompt = async (diff, context) => {
+  const INIT_MESSAGES_PROMPT = await getMainCommitPrompt(context);
+  return [
+    ...INIT_MESSAGES_PROMPT,
+    { role: "user", content: diff }
+  ];
+};
+function delay3(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function splitDiffByLines(diff, maxTokens) {
+  const lines = diff.split("\n");
+  const chunks = [];
+  let currentChunk = "";
+  if (maxTokens <= 0) {
+    throw new Error(GenerateCommitMessageErrorEnum.outputTokensTooHigh);
+  }
+  for (let line of lines) {
+    while (tokenCount(line) > maxTokens) {
+      const subLine = line.substring(0, maxTokens);
+      line = line.substring(maxTokens);
+      chunks.push(subLine);
+    }
+    const potentialChunk = currentChunk + (currentChunk ? "\n" : "") + line;
+    if (tokenCount(potentialChunk) > maxTokens) {
+      if (currentChunk) chunks.push(currentChunk);
+      currentChunk = line;
+    } else {
+      currentChunk = potentialChunk;
+    }
+  }
+  if (currentChunk) chunks.push(currentChunk);
+  return chunks;
+}
+function splitDiffByFiles(diff, maxTokens) {
+  const fileDiffs = diff.split(DIFF_SEPARATOR).slice(1);
+  const chunks = [];
+  let currentChunk = { content: "", files: [], tokenCount: 0 };
+  for (const fileDiff of fileDiffs) {
+    const fullFileDiff = DIFF_SEPARATOR + fileDiff;
+    const fileTokens = tokenCount(fullFileDiff);
+    const fileName = extractFileName(fileDiff);
+    if (currentChunk.tokenCount + fileTokens > maxTokens && currentChunk.content) {
+      chunks.push(currentChunk);
+      currentChunk = { content: "", files: [], tokenCount: 0 };
+    }
+    if (fileTokens > maxTokens) {
+      if (currentChunk.content) {
+        chunks.push(currentChunk);
+        currentChunk = { content: "", files: [], tokenCount: 0 };
+      }
+      const subChunks = splitLargeFileDiff(fileDiff, maxTokens);
+      for (const subContent of subChunks) {
+        chunks.push({
+          content: DIFF_SEPARATOR + subContent,
+          files: [fileName],
+          tokenCount: tokenCount(DIFF_SEPARATOR + subContent)
+        });
+      }
+    } else {
+      currentChunk.content += fullFileDiff;
+      currentChunk.files.push(fileName);
+      currentChunk.tokenCount += fileTokens;
+    }
+  }
+  if (currentChunk.content) {
+    chunks.push(currentChunk);
+  }
+  return chunks;
+}
+function splitLargeFileDiff(fileDiff, maxTokens) {
+  const hunkSeparator = "@@ ";
+  const [fileHeader, ...hunks] = fileDiff.split(hunkSeparator);
+  const mergedHunks = mergeDiffs(
+    hunks.map((hunk) => hunkSeparator + hunk),
+    maxTokens - tokenCount(fileHeader)
+    // Reserve space for header
+  );
+  const result = [];
+  for (const hunk of mergedHunks) {
+    const fullDiff = fileHeader + hunk;
+    if (tokenCount(fullDiff) > maxTokens) {
+      const lineSplit = splitDiffByLines(fullDiff, maxTokens);
+      result.push(...lineSplit);
+    } else {
+      result.push(fullDiff);
+    }
+  }
+  return result;
+}
+async function getDiffSummaries(chunks) {
+  const engine = getEngine();
+  const summaries = [];
+  for (const chunk of chunks) {
+    const messages = [
+      SUMMARY_PROMPT,
+      { role: "user", content: chunk.content }
+    ];
+    try {
+      const summary = await engine.generateCommitMessage(messages);
+      summaries.push({
+        summary: summary || `Changes in: ${chunk.files.join(", ")}`,
+        files: chunk.files
+      });
+    } catch (error) {
+      summaries.push({
+        summary: `Changes in: ${chunk.files.join(", ")}`,
+        files: chunk.files
+      });
+    }
+    if (chunks.indexOf(chunk) < chunks.length - 1) {
+      await delay3(RATE_LIMIT_DELAY_MS);
+    }
+  }
+  return summaries;
+}
+async function synthesizeCommitMessage(summaries, context) {
+  const engine = getEngine();
+  const translation4 = i18n[config5.OCO_LANGUAGE || "en"];
+  const combinedSummary = summaries.map((s2) => {
+    const fileList = s2.files.length > 0 ? `**Files:** ${s2.files.join(", ")}
+` : "";
+    return `${fileList}${s2.summary}`;
+  }).join("\n\n---\n\n");
+  const synthesisPrompt = getSynthesisPrompt(translation4.localLanguage, context);
+  const promptTokens = tokenCount(synthesisPrompt.content);
+  const maxSummaryTokens = MAX_TOKENS_INPUT - promptTokens - MAX_TOKENS_OUTPUT - ADJUSTMENT_FACTOR;
+  let finalSummary = combinedSummary;
+  if (tokenCount(combinedSummary) > maxSummaryTokens) {
+    finalSummary = await recursivelyReduceSummaries(summaries, maxSummaryTokens);
+  }
+  const messages = [
+    synthesisPrompt,
+    {
+      role: "user",
+      content: `Here is a summary of all changes in this commit:
+
+${finalSummary}`
+    }
+  ];
+  const commitMessage = await engine.generateCommitMessage(messages);
+  if (!commitMessage) {
+    throw new Error("EMPTY_MESSAGE" /* emptyMessage */);
+  }
+  return commitMessage;
+}
+async function recursivelyReduceSummaries(summaries, maxTokens) {
+  const engine = getEngine();
+  const batches = [];
+  let currentBatch = [];
+  let currentBatchTokens = 0;
+  for (const summary of summaries) {
+    const summaryTokens = tokenCount(summary.summary);
+    if (currentBatchTokens + summaryTokens > maxTokens / 2 && currentBatch.length > 0) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentBatchTokens = 0;
+    }
+    currentBatch.push(summary);
+    currentBatchTokens += summaryTokens;
+  }
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+  if (batches.length <= 1) {
+    return summaries.map((s2) => s2.summary).join("\n").substring(0, maxTokens * 3);
+  }
+  const reducedSummaries = [];
+  for (const batch of batches) {
+    const batchText = batch.map((s2) => s2.summary).join("\n");
+    const allFiles = batch.flatMap((s2) => s2.files);
+    const messages = [
+      SUMMARY_PROMPT,
+      { role: "user", content: `Consolidate these changes into a shorter summary:
+
+${batchText}` }
+    ];
+    try {
+      const reduced = await engine.generateCommitMessage(messages);
+      reducedSummaries.push({
+        summary: reduced || batchText.substring(0, 500),
+        files: allFiles
+      });
+    } catch {
+      reducedSummaries.push({
+        summary: batchText.substring(0, 500),
+        files: allFiles
+      });
+    }
+    await delay3(RATE_LIMIT_DELAY_MS);
+  }
+  const combinedReduced = reducedSummaries.map((s2) => s2.summary).join("\n\n");
+  if (tokenCount(combinedReduced) > maxTokens) {
+    return recursivelyReduceSummaries(reducedSummaries, maxTokens);
+  }
+  return combinedReduced;
+}
 var generateCommitMessageByDiff = async (diff, context = "") => {
   try {
     const INIT_MESSAGES_PROMPT = await getMainCommitPrompt(context);
     const INIT_MESSAGES_PROMPT_LENGTH = INIT_MESSAGES_PROMPT.map(
       (msg) => tokenCount(msg.content) + 4
     ).reduce((a4, b7) => a4 + b7, 0);
-    const MAX_REQUEST_TOKENS = MAX_TOKENS_INPUT - ADJUSTMENT_FACTOR - INIT_MESSAGES_PROMPT_LENGTH - MAX_TOKENS_OUTPUT;
-    if (tokenCount(diff) >= MAX_REQUEST_TOKENS) {
-      const commitMessagePromises = await getCommitMsgsPromisesFromFileDiffs(
-        diff,
-        MAX_REQUEST_TOKENS
-      );
-      const commitMessages = [];
-      for (const promise of commitMessagePromises) {
-        commitMessages.push(await promise);
-        await delay3(2e3);
+    const MAX_DIFF_TOKENS = MAX_TOKENS_INPUT - ADJUSTMENT_FACTOR - INIT_MESSAGES_PROMPT_LENGTH - MAX_TOKENS_OUTPUT;
+    const diffTokens = tokenCount(diff);
+    if (diffTokens <= MAX_DIFF_TOKENS) {
+      const messages = await generateCommitMessageChatCompletionPrompt(diff, context);
+      const engine = getEngine();
+      const commitMessage = await engine.generateCommitMessage(messages);
+      if (!commitMessage) {
+        throw new Error("EMPTY_MESSAGE" /* emptyMessage */);
       }
-      return commitMessages.join("\n\n");
+      return commitMessage;
     }
-    const messages = await generateCommitMessageChatCompletionPrompt(
-      diff,
-      context
-    );
-    const engine = getEngine();
-    const commitMessage = await engine.generateCommitMessage(messages);
-    if (!commitMessage)
-      throw new Error("EMPTY_MESSAGE" /* emptyMessage */);
-    return commitMessage;
+    const chunks = splitDiffByFiles(diff, MAX_DIFF_TOKENS);
+    const summaries = await getDiffSummaries(chunks);
+    return await synthesizeCommitMessage(summaries, context);
   } catch (error) {
     throw error;
   }
 };
-function getMessagesPromisesByChangesInFile(fileDiff, separator, maxChangeLength) {
-  const hunkHeaderSeparator = "@@ ";
-  const [fileHeader, ...fileDiffByLines] = fileDiff.split(hunkHeaderSeparator);
-  const mergedChanges = mergeDiffs(
-    fileDiffByLines.map((line) => hunkHeaderSeparator + line),
-    maxChangeLength
-  );
-  const lineDiffsWithHeader = [];
-  for (const change of mergedChanges) {
-    const totalChange = fileHeader + change;
-    if (tokenCount(totalChange) > maxChangeLength) {
-      const splitChanges = splitDiff(totalChange, maxChangeLength);
-      lineDiffsWithHeader.push(...splitChanges);
-    } else {
-      lineDiffsWithHeader.push(totalChange);
-    }
-  }
-  const engine = getEngine();
-  const commitMsgsFromFileLineDiffs = lineDiffsWithHeader.map(
-    async (lineDiff) => {
-      const messages = await generateCommitMessageChatCompletionPrompt(
-        separator + lineDiff,
-        ""
-      );
-      return engine.generateCommitMessage(messages);
-    }
-  );
-  return commitMsgsFromFileLineDiffs;
-}
-function splitDiff(diff, maxChangeLength) {
-  const lines = diff.split("\n");
-  const splitDiffs = [];
-  let currentDiff = "";
-  if (maxChangeLength <= 0) {
-    throw new Error(GenerateCommitMessageErrorEnum.outputTokensTooHigh);
-  }
-  for (let line of lines) {
-    while (tokenCount(line) > maxChangeLength) {
-      const subLine = line.substring(0, maxChangeLength);
-      line = line.substring(maxChangeLength);
-      splitDiffs.push(subLine);
-    }
-    if (tokenCount(currentDiff) + tokenCount("\n" + line) > maxChangeLength) {
-      splitDiffs.push(currentDiff);
-      currentDiff = line;
-    } else {
-      currentDiff += "\n" + line;
-    }
-  }
-  if (currentDiff) {
-    splitDiffs.push(currentDiff);
-  }
-  return splitDiffs;
-}
-var getCommitMsgsPromisesFromFileDiffs = async (diff, maxDiffLength) => {
-  const separator = "diff --git ";
-  const diffByFiles = diff.split(separator).slice(1);
-  const mergedFilesDiffs = mergeDiffs(diffByFiles, maxDiffLength);
-  const commitMessagePromises = [];
-  for (const fileDiff of mergedFilesDiffs) {
-    if (tokenCount(fileDiff) >= maxDiffLength) {
-      const messagesPromises = getMessagesPromisesByChangesInFile(
-        fileDiff,
-        separator,
-        maxDiffLength
-      );
-      commitMessagePromises.push(...messagesPromises);
-    } else {
-      const messages = await generateCommitMessageChatCompletionPrompt(
-        separator + fileDiff,
-        ""
-      );
-      const engine = getEngine();
-      commitMessagePromises.push(engine.generateCommitMessage(messages));
-    }
-  }
-  return commitMessagePromises;
-};
-function delay3(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 // src/utils/git.ts
 var import_fs3 = require("fs");
@@ -67559,7 +67723,6 @@ var generateCommitMessageFromGitDiff = async ({
   diff,
   extraArgs: extraArgs2,
   context = "",
-  fullGitMojiSpec = false,
   skipCommitConfirmation = false
 }) => {
   await assertGitRepo();
@@ -67568,7 +67731,6 @@ var generateCommitMessageFromGitDiff = async ({
   try {
     let commitMessage = await generateCommitMessageByDiff(
       diff,
-      fullGitMojiSpec,
       context
     );
     const messageTemplate = checkMessageTemplate(extraArgs2);
@@ -67674,8 +67836,7 @@ ${source_default.grey("\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2
       if (regenerateMessage) {
         await generateCommitMessageFromGitDiff({
           diff,
-          extraArgs: extraArgs2,
-          fullGitMojiSpec
+          extraArgs: extraArgs2
         });
       }
     }
@@ -67689,7 +67850,7 @@ ${source_default.grey("\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2014\u2
     process.exit(1);
   }
 };
-async function commit(extraArgs2 = [], context = "", isStageAllFlag = false, fullGitMojiSpec = false, skipCommitConfirmation = false) {
+async function commit(extraArgs2 = [], context = "", isStageAllFlag = false, skipCommitConfirmation = false) {
   if (isStageAllFlag) {
     const changedFiles2 = await getChangedFiles();
     if (changedFiles2) await gitAdd({ files: changedFiles2 });
@@ -67718,7 +67879,7 @@ async function commit(extraArgs2 = [], context = "", isStageAllFlag = false, ful
     });
     if (hD2(isStageAllAndCommitConfirmedByUser)) process.exit(1);
     if (isStageAllAndCommitConfirmedByUser) {
-      await commit(extraArgs2, context, true, fullGitMojiSpec);
+      await commit(extraArgs2, context, true);
       process.exit(0);
     }
     if (stagedFiles.length === 0 && changedFiles.length > 0) {
@@ -67732,7 +67893,7 @@ async function commit(extraArgs2 = [], context = "", isStageAllFlag = false, ful
       if (hD2(files)) process.exit(0);
       await gitAdd({ files });
     }
-    await commit(extraArgs2, context, false, fullGitMojiSpec);
+    await commit(extraArgs2, context, false);
     process.exit(0);
   }
   stagedFilesSpinner.stop(
@@ -67744,7 +67905,6 @@ ${stagedFiles.map((file) => `  ${file}`).join("\n")}`
       diff: await getDiff({ files: stagedFiles }),
       extraArgs: extraArgs2,
       context,
-      fullGitMojiSpec,
       skipCommitConfirmation
     })
   );
@@ -68136,7 +68296,7 @@ Z2(
     if (await isHookCalled()) {
       prepareCommitMessageHook();
     } else {
-      commit(extraArgs, flags.context, false, flags.fgm, flags.yes);
+      commit(extraArgs, flags.context, false, flags.yes);
     }
   },
   extraArgs

@@ -47,7 +47,7 @@ cli(
     if (await isHookCalled()) {
       prepareCommitMessageHook();
     } else {
-      commit(extraArgs, flags.context, false, flags.fgm, flags.yes);
+      commit(extraArgs, flags.context, false, flags.yes);
     }
   },
   extraArgs

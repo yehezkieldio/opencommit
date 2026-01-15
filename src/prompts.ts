@@ -14,6 +14,76 @@ const translation = i18n[(config.OCO_LANGUAGE as I18nLocals) || 'en'];
 export const IDENTITY =
   'You are to act as an author of a commit message in git.';
 
+/**
+ * Critical constraint to ensure only ONE commit message is generated.
+ * This prevents the multi-header bug when processing large diffs.
+ */
+const SINGLE_MESSAGE_CONSTRAINT = `
+## Critical Output Rules:
+- You MUST generate exactly ONE commit message
+- NEVER output multiple commit headers (e.g., "feat: X\\n\\nfix: Y" is INVALID)
+- If multiple things changed, pick the most significant type
+- Use the commit body to mention secondary changes if needed
+- When in doubt, prefer: feat > fix > refactor > chore`;
+
+/**
+ * SUMMARY_PROMPT for Map phase - analyzes diff chunks and extracts key changes.
+ * Used when diffs are too large and need to be processed in chunks.
+ */
+export const SUMMARY_PROMPT: OpenAI.Chat.Completions.ChatCompletionMessageParam =
+{
+  role: 'system',
+  content: `You are a code analyst. Analyze the following git diff and extract the key technical changes.
+
+## Instructions:
+- Return a concise bulleted list of changes (3-5 items max)
+- Focus on WHAT changed, not WHY
+- Include file names where relevant
+- Do NOT write a commit message or commit header
+- Do NOT use prefixes like "feat:", "fix:", etc.
+- Be technical and specific
+- Keep each bullet point to one line
+
+## Example Output:
+- Added user authentication middleware in \`auth.ts\`
+- Updated API endpoint path from /v1 to /v2 in \`routes.ts\`
+- Fixed null pointer exception in error handler
+- Removed deprecated logging utility`
+};
+
+/**
+ * SYNTHESIS_PROMPT for Reduce phase - combines summaries into one commit message.
+ * Takes analyzed chunk summaries and produces a single cohesive commit.
+ */
+export const getSynthesisPrompt = (
+  language: string,
+  context: string
+): OpenAI.Chat.Completions.ChatCompletionMessageParam => ({
+  role: 'system',
+  content: (() => {
+    const mission = `${IDENTITY}
+
+You will receive a summary of all changes across multiple files/chunks in a git commit.
+Your task is to write **exactly ONE** commit message that covers all changes.`;
+
+    const conventionGuidelines = COMMIT_GUIDELINES;
+    const descriptionGuideline = getDescriptionInstruction();
+    const oneLineCommitGuideline = getOneLineCommitInstruction();
+    const scopeInstruction = getScopeInstruction();
+    const generalGuidelines = `Use the present tense. Lines must not be longer than 74 characters. Use ${language} for the commit message.`;
+    const userInputContext = userInputCodeContext(context);
+
+    return `${mission}
+${conventionGuidelines}
+${SINGLE_MESSAGE_CONSTRAINT}
+${descriptionGuideline}
+${oneLineCommitGuideline}
+${scopeInstruction}
+${generalGuidelines}
+${userInputContext}`;
+  })()
+});
+
 const COMMIT_GUIDELINES = `Follow these commit message guidelines:
 
 ## Format Structure
@@ -135,14 +205,14 @@ const INIT_MAIN_PROMPT = (
     const generalGuidelines = `Use the present tense. Lines must not be longer than 74 characters. Use ${language} for the commit message.`;
     const userInputContext = userInputCodeContext(context);
 
-    return `${missionStatement}\n${diffInstruction}\n${conventionGuidelines}\n${descriptionGuideline}\n${oneLineCommitGuideline}\n${scopeInstruction}\n${generalGuidelines}\n${userInputContext}`;
+    return `${missionStatement}\n${diffInstruction}\n${conventionGuidelines}\n${SINGLE_MESSAGE_CONSTRAINT}\n${descriptionGuideline}\n${oneLineCommitGuideline}\n${scopeInstruction}\n${generalGuidelines}\n${userInputContext}`;
   })()
 });
 
 export const INIT_DIFF_PROMPT: OpenAI.Chat.Completions.ChatCompletionMessageParam =
-  {
-    role: 'user',
-    content: `diff --git a/src/server.ts b/src/server.ts
+{
+  role: 'user',
+  content: `diff --git a/src/server.ts b/src/server.ts
     index ad4db42..f3b18a9 100644
     --- a/src/server.ts
     +++ b/src/server.ts
@@ -166,7 +236,7 @@ export const INIT_DIFF_PROMPT: OpenAI.Chat.Completions.ChatCompletionMessagePara
                 +app.listen(process.env.PORT || PORT, () => {
                     +  console.log(\`Server listening on port \${PORT}\`);
                 });`
-  };
+};
 
 const getConsistencyContent = (translation: ConsistencyPrompt) => {
   const fixMessage =
@@ -219,7 +289,7 @@ export const getMainCommitPrompt = async (
         INIT_DIFF_PROMPT,
         INIT_CONSISTENCY_PROMPT(
           commitLintConfig.consistency[
-            translation.localLanguage
+          translation.localLanguage
           ] as ConsistencyPrompt
         )
       ];
