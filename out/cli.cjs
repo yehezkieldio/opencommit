@@ -56985,14 +56985,20 @@ var cl100k_base_default = { pat_str: "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L
 
 // src/utils/tokenCount.ts
 var import_lite = __toESM(require_tiktoken(), 1);
+var cachedEncoder = null;
+function getEncoder() {
+  if (!cachedEncoder) {
+    cachedEncoder = new import_lite.Tiktoken(
+      cl100k_base_default.bpe_ranks,
+      cl100k_base_default.special_tokens,
+      cl100k_base_default.pat_str
+    );
+  }
+  return cachedEncoder;
+}
 function tokenCount(content) {
-  const encoding = new import_lite.Tiktoken(
-    cl100k_base_default.bpe_ranks,
-    cl100k_base_default.special_tokens,
-    cl100k_base_default.pat_str
-  );
+  const encoding = getEncoder();
   const tokens = encoding.encode(content);
-  encoding.free();
   return tokens.length;
 }
 
