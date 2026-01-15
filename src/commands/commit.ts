@@ -41,7 +41,6 @@ interface GenerateCommitMessageFromGitDiffParams {
   diff: string;
   extraArgs: string[];
   context?: string;
-  fullGitMojiSpec?: boolean;
   skipCommitConfirmation?: boolean;
 }
 
@@ -49,7 +48,6 @@ const generateCommitMessageFromGitDiff = async ({
   diff,
   extraArgs,
   context = '',
-  fullGitMojiSpec = false,
   skipCommitConfirmation = false
 }: GenerateCommitMessageFromGitDiffParams): Promise<void> => {
   await assertGitRepo();
@@ -59,7 +57,6 @@ const generateCommitMessageFromGitDiff = async ({
   try {
     let commitMessage = await generateCommitMessageByDiff(
       diff,
-      fullGitMojiSpec,
       context
     );
 
@@ -202,7 +199,6 @@ ${chalk.grey('——————————————————')}`
         await generateCommitMessageFromGitDiff({
           diff,
           extraArgs,
-          fullGitMojiSpec
         });
       }
     }
@@ -223,7 +219,6 @@ export async function commit(
   extraArgs: string[] = [],
   context: string = '',
   isStageAllFlag: Boolean = false,
-  fullGitMojiSpec: boolean = false,
   skipCommitConfirmation: boolean = false
 ) {
   if (isStageAllFlag) {
@@ -264,7 +259,7 @@ export async function commit(
     if (isCancel(isStageAllAndCommitConfirmedByUser)) process.exit(1);
 
     if (isStageAllAndCommitConfirmedByUser) {
-      await commit(extraArgs, context, true, fullGitMojiSpec);
+      await commit(extraArgs, context, true);
       process.exit(0);
     }
 
@@ -282,7 +277,7 @@ export async function commit(
       await gitAdd({ files });
     }
 
-    await commit(extraArgs, context, false, fullGitMojiSpec);
+    await commit(extraArgs, context, false);
     process.exit(0);
   }
 
@@ -297,7 +292,6 @@ export async function commit(
       diff: await getDiff({ files: stagedFiles }),
       extraArgs,
       context,
-      fullGitMojiSpec,
       skipCommitConfirmation
     })
   );
