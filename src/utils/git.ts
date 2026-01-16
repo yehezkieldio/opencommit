@@ -19,7 +19,7 @@ export const assertGitRepo = async () => {
 export const getOpenCommitIgnore = async (): Promise<Ignore> => {
   const gitDir = await getGitDir();
 
-  const ig = ignore();
+  const ig = (ignore as any)();
 
   try {
     ig.add(

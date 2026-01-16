@@ -1,15 +1,12 @@
-import {
-  AzureKeyCredential,
-  OpenAIClient as AzureOpenAIClient
-} from '@azure/openai';
+import { AzureOpenAI } from 'openai';
 import { outro } from '@clack/prompts';
 import axios from 'axios';
 import chalk from 'chalk';
 import { OpenAI } from 'openai';
-import { GenerateCommitMessageErrorEnum } from '../generateCommitMessageFromGitDiff';
-import { removeContentTags } from '../utils/removeContentTags';
-import { tokenCount } from '../utils/tokenCount';
-import { AiEngine, AiEngineConfig } from './Engine';
+import { GenerateCommitMessageErrorEnum } from '../generate-commit-message-from-git-diff.js';
+import { removeContentTags } from '../utils/remove-content-tags.js';
+import { tokenCount } from './../utils/token-count.js';
+import { AiEngine, AiEngineConfig } from './engine.js';
 
 interface AzureAiEngineConfig extends AiEngineConfig {
   baseURL: string;
@@ -18,14 +15,15 @@ interface AzureAiEngineConfig extends AiEngineConfig {
 
 export class AzureEngine implements AiEngine {
   config: AzureAiEngineConfig;
-  client: AzureOpenAIClient;
+  client: AzureOpenAI;
 
   constructor(config: AzureAiEngineConfig) {
     this.config = config;
-    this.client = new AzureOpenAIClient(
-      this.config.baseURL,
-      new AzureKeyCredential(this.config.apiKey)
-    );
+    this.client = new AzureOpenAI({
+      endpoint: this.config.baseURL,
+      apiKey: this.config.apiKey,
+      apiVersion: '2024-08-01-preview'
+    });
   }
 
   generateCommitMessage = async (
@@ -43,10 +41,10 @@ export class AzureEngine implements AiEngine {
         throw new Error(GenerateCommitMessageErrorEnum.tooMuchTokens);
       }
 
-      const data = await this.client.getChatCompletions(
-        this.config.model,
+      const data = await this.client.chat.completions.create({
+        model: this.config.model,
         messages
-      );
+      });
 
       const message = data.choices[0].message;
 

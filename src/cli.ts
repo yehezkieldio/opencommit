@@ -1,15 +1,11 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { cli } from 'cleye';
 
-import packageJSON from '../package.json';
-import { commit } from './commands/commit';
-import { commitlintConfigCommand } from './commands/commitlint';
-import { configCommand } from './commands/config';
-import { hookCommand, isHookCalled } from './commands/githook.js';
-import { prepareCommitMessageHook } from './commands/prepare-commit-msg-hook';
-import { checkIsLatestVersion } from './utils/checkIsLatestVersion';
-import { runMigrations } from './migrations/_run.js';
+import packageJSON from '../package.json' with { type: 'json' };
+import { commit } from './commands/commit.js';
+import { configCommand } from './commands/config.js';
+import { checkIsLatestVersion } from './utils/check-is-latest-version.js';
 
 const extraArgs = process.argv.slice(2);
 
@@ -17,7 +13,7 @@ cli(
   {
     version: packageJSON.version,
     name: 'opencommit',
-    commands: [configCommand, hookCommand, commitlintConfigCommand],
+    commands: [configCommand],
     flags: {
       fgm: {
         type: Boolean,
@@ -41,14 +37,10 @@ cli(
     help: { description: packageJSON.description }
   },
   async ({ flags }) => {
-    await runMigrations();
     await checkIsLatestVersion();
 
-    if (await isHookCalled()) {
-      prepareCommitMessageHook();
-    } else {
-      commit(extraArgs, flags.context, false, flags.yes);
-    }
+    // Removed hooks and migrations logic
+    commit(extraArgs, flags.context, false, flags.yes);
   },
   extraArgs
 );

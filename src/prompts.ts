@@ -1,15 +1,7 @@
-import { note } from '@clack/prompts';
 import { OpenAI } from 'openai';
-import { getConfig } from './commands/config';
-import { i18n, I18nLocals } from './i18n';
-import { configureCommitlintIntegration } from './modules/commitlint/config';
-import { commitlintPrompts } from './modules/commitlint/prompts';
-import { ConsistencyPrompt } from './modules/commitlint/types';
-import * as utils from './modules/commitlint/utils';
-import { removeConventionalCommitWord } from './utils/removeConventionalCommitWord';
+import { getConfig } from './commands/config.js';
 
 const config = getConfig();
-const translation = i18n[(config.OCO_LANGUAGE as I18nLocals) || 'en'];
 
 export const IDENTITY =
   'You are to act as an author of a commit message in git.';
@@ -31,9 +23,9 @@ const SINGLE_MESSAGE_CONSTRAINT = `
  * Used when diffs are too large and need to be processed in chunks.
  */
 export const SUMMARY_PROMPT: OpenAI.Chat.Completions.ChatCompletionMessageParam =
-{
-  role: 'system',
-  content: `You are a code analyst. Analyze the following git diff and extract the key technical changes.
+  {
+    role: 'system',
+    content: `You are a code analyst. Analyze the following git diff and extract the key technical changes.
 
 ## Instructions:
 - Return a concise bulleted list of changes (3-5 items max)
@@ -49,40 +41,7 @@ export const SUMMARY_PROMPT: OpenAI.Chat.Completions.ChatCompletionMessageParam 
 - Updated API endpoint path from /v1 to /v2 in \`routes.ts\`
 - Fixed null pointer exception in error handler
 - Removed deprecated logging utility`
-};
-
-/**
- * SYNTHESIS_PROMPT for Reduce phase - combines summaries into one commit message.
- * Takes analyzed chunk summaries and produces a single cohesive commit.
- */
-export const getSynthesisPrompt = (
-  language: string,
-  context: string
-): OpenAI.Chat.Completions.ChatCompletionMessageParam => ({
-  role: 'system',
-  content: (() => {
-    const mission = `${IDENTITY}
-
-You will receive a summary of all changes across multiple files/chunks in a git commit.
-Your task is to write **exactly ONE** commit message that covers all changes.`;
-
-    const conventionGuidelines = COMMIT_GUIDELINES;
-    const descriptionGuideline = getDescriptionInstruction();
-    const oneLineCommitGuideline = getOneLineCommitInstruction();
-    const scopeInstruction = getScopeInstruction();
-    const generalGuidelines = `Use the present tense. Lines must not be longer than 74 characters. Use ${language} for the commit message.`;
-    const userInputContext = userInputCodeContext(context);
-
-    return `${mission}
-${conventionGuidelines}
-${SINGLE_MESSAGE_CONSTRAINT}
-${descriptionGuideline}
-${oneLineCommitGuideline}
-${scopeInstruction}
-${generalGuidelines}
-${userInputContext}`;
-  })()
-});
+  };
 
 const COMMIT_GUIDELINES = `Follow these commit message guidelines:
 
@@ -175,13 +134,6 @@ const getScopeInstruction = () =>
     ? 'Do not include a scope in the commit message format. Use the format: <type>: <subject>'
     : '';
 
-/**
- * Get the context of the user input
- * @param extraArgs - The arguments passed to the command line
- * @example
- *  $ oco -- This is a context used to generate the commit message
- * @returns - The context of the user input
- */
 const userInputCodeContext = (context: string) => {
   if (context !== '' && context !== ' ') {
     return `Additional context provided by the user: <context>${context}</context>\nConsider this context when generating the commit message, incorporating relevant information when appropriate.`;
@@ -190,7 +142,6 @@ const userInputCodeContext = (context: string) => {
 };
 
 const INIT_MAIN_PROMPT = (
-  language: string,
   context: string
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam => ({
   role: 'system',
@@ -202,7 +153,7 @@ const INIT_MAIN_PROMPT = (
     const descriptionGuideline = getDescriptionInstruction();
     const oneLineCommitGuideline = getOneLineCommitInstruction();
     const scopeInstruction = getScopeInstruction();
-    const generalGuidelines = `Use the present tense. Lines must not be longer than 74 characters. Use ${language} for the commit message.`;
+    const generalGuidelines = `Use the present tense. Lines must not be longer than 74 characters. Use English for the commit message.`;
     const userInputContext = userInputCodeContext(context);
 
     return `${missionStatement}\n${diffInstruction}\n${conventionGuidelines}\n${SINGLE_MESSAGE_CONSTRAINT}\n${descriptionGuideline}\n${oneLineCommitGuideline}\n${scopeInstruction}\n${generalGuidelines}\n${userInputContext}`;
@@ -210,9 +161,9 @@ const INIT_MAIN_PROMPT = (
 });
 
 export const INIT_DIFF_PROMPT: OpenAI.Chat.Completions.ChatCompletionMessageParam =
-{
-  role: 'user',
-  content: `diff --git a/src/server.ts b/src/server.ts
+  {
+    role: 'user',
+    content: `diff --git a/src/server.ts b/src/server.ts
     index ad4db42..f3b18a9 100644
     --- a/src/server.ts
     +++ b/src/server.ts
@@ -236,69 +187,38 @@ export const INIT_DIFF_PROMPT: OpenAI.Chat.Completions.ChatCompletionMessagePara
                 +app.listen(process.env.PORT || PORT, () => {
                     +  console.log(\`Server listening on port \${PORT}\`);
                 });`
-};
+  };
 
-const getConsistencyContent = (translation: ConsistencyPrompt) => {
-  const fixMessage =
-    config.OCO_OMIT_SCOPE && translation.commitFixOmitScope
-      ? translation.commitFixOmitScope
-      : translation.commitFix;
-
-  const featMessage =
-    config.OCO_OMIT_SCOPE && translation.commitFeatOmitScope
-      ? translation.commitFeatOmitScope
-      : translation.commitFeat;
-
-  const fix = fixMessage;
-  const feat = config.OCO_ONE_LINE_COMMIT ? '' : featMessage;
-
-  const description = config.OCO_DESCRIPTION
-    ? translation.commitDescription
-    : '';
-
-  return [fix, feat, description].filter(Boolean).join('\n');
-};
-
-const INIT_CONSISTENCY_PROMPT = (
-  translation: ConsistencyPrompt
+export const getSynthesisPrompt = (
+  context: string
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam => ({
-  role: 'assistant',
-  content: getConsistencyContent(translation)
+  role: 'system',
+  content: (() => {
+    const mission = `${IDENTITY}
+
+You will receive a summary of all changes across multiple files/chunks in a git commit.
+Your task is to write **exactly ONE** commit message that covers all changes.`;
+
+    const conventionGuidelines = COMMIT_GUIDELINES;
+    const descriptionGuideline = getDescriptionInstruction();
+    const oneLineCommitGuideline = getOneLineCommitInstruction();
+    const scopeInstruction = getScopeInstruction();
+    const generalGuidelines = `Use the present tense. Lines must not be longer than 74 characters. Use English for the commit message.`;
+    const userInputContext = userInputCodeContext(context);
+
+    return `${mission}
+${conventionGuidelines}
+${SINGLE_MESSAGE_CONSTRAINT}
+${descriptionGuideline}
+${oneLineCommitGuideline}
+${scopeInstruction}
+${generalGuidelines}
+${userInputContext}`;
+  })()
 });
 
 export const getMainCommitPrompt = async (
   context: string
 ): Promise<Array<OpenAI.Chat.Completions.ChatCompletionMessageParam>> => {
-  switch (config.OCO_PROMPT_MODULE) {
-    case '@commitlint':
-      if (!(await utils.commitlintLLMConfigExists())) {
-        note(
-          `OCO_PROMPT_MODULE is @commitlint but you haven't generated consistency for this project yet.`
-        );
-        await configureCommitlintIntegration();
-      }
-
-      // Replace example prompt with a prompt that's generated by OpenAI for the commitlint config.
-      const commitLintConfig = await utils.getCommitlintLLMConfig();
-
-      return [
-        commitlintPrompts.INIT_MAIN_PROMPT(
-          translation.localLanguage,
-          commitLintConfig.prompts
-        ),
-        INIT_DIFF_PROMPT,
-        INIT_CONSISTENCY_PROMPT(
-          commitLintConfig.consistency[
-          translation.localLanguage
-          ] as ConsistencyPrompt
-        )
-      ];
-
-    default:
-      return [
-        INIT_MAIN_PROMPT(translation.localLanguage, context),
-        INIT_DIFF_PROMPT,
-        INIT_CONSISTENCY_PROMPT(translation)
-      ];
-  }
+  return [INIT_MAIN_PROMPT(context), INIT_DIFF_PROMPT];
 };

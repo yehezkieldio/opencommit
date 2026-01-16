@@ -10,16 +10,16 @@ import {
 } from '@clack/prompts';
 import chalk from 'chalk';
 import { execa } from 'execa';
-import { generateCommitMessageByDiff } from '../generateCommitMessageFromGitDiff';
+import { generateCommitMessageByDiff } from '../generate-commit-message-from-git-diff.js';
 import {
   assertGitRepo,
   getChangedFiles,
   getDiff,
   getStagedFiles,
   gitAdd
-} from '../utils/git';
-import { trytm } from '../utils/trytm';
-import { getConfig } from './config';
+} from '../utils/git.js';
+import { trytm } from '../utils/trytm.js';
+import { getConfig } from './config.js';
 
 const config = getConfig();
 
@@ -55,10 +55,7 @@ const generateCommitMessageFromGitDiff = async ({
   commitGenerationSpinner.start('Generating the commit message');
 
   try {
-    let commitMessage = await generateCommitMessageByDiff(
-      diff,
-      context
-    );
+    let commitMessage = await generateCommitMessageByDiff(diff, context);
 
     const messageTemplate = checkMessageTemplate(extraArgs);
     if (
@@ -86,13 +83,13 @@ ${chalk.grey('——————————————————')}`
     const userAction = skipCommitConfirmation
       ? 'Yes'
       : await select({
-        message: 'Confirm the commit message?',
-        options: [
-          { value: 'Yes', label: 'Yes' },
-          { value: 'No', label: 'No' },
-          { value: 'Edit', label: 'Edit' }
-        ]
-      });
+          message: 'Confirm the commit message?',
+          options: [
+            { value: 'Yes', label: 'Yes' },
+            { value: 'No', label: 'No' },
+            { value: 'Edit', label: 'Edit' }
+          ]
+        });
 
     if (isCancel(userAction)) process.exit(1);
 
@@ -164,7 +161,8 @@ ${chalk.grey('——————————————————')}`
           ]);
 
           pushSpinner.stop(
-            `${chalk.green('✔')} Successfully pushed all commits to ${remotes[0]
+            `${chalk.green('✔')} Successfully pushed all commits to ${
+              remotes[0]
             }`
           );
 
@@ -211,7 +209,7 @@ ${chalk.grey('——————————————————')}`
       if (regenerateMessage) {
         await generateCommitMessageFromGitDiff({
           diff,
-          extraArgs,
+          extraArgs
         });
       }
     }
