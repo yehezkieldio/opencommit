@@ -38,7 +38,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "bun --bun tsdown",
     "lint": "biome check",
     "lint:fix": "biome  check --write --unsafe .",
     "format": "biome format --write",
