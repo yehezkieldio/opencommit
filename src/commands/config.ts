@@ -4,7 +4,6 @@ import { join as pathJoin, resolve as pathResolve } from "node:path";
 import { intro, outro } from "@clack/prompts";
 import chalk from "chalk";
 import { command } from "cleye";
-import * as dotenv from "dotenv";
 import { parse as iniParse, stringify as iniStringify } from "ini";
 import { COMMANDS } from "./enum.js";
 
@@ -34,11 +33,11 @@ export const CONFIG_MODES = {
 export type CONFIG_MODES = (typeof CONFIG_MODES)[keyof typeof CONFIG_MODES];
 
 export const MODEL_LIST = {
-    azure: ["gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-3.5-turbo"],
+    azure: ["gpt-4.1-mini"],
 };
 
 const getDefaultModel = (_provider: string | undefined): string => {
-    return MODEL_LIST.azure[0];
+    return MODEL_LIST.azure[0] || "gpt-4.1-mini";
 };
 
 export const DEFAULT_TOKEN_LIMITS = {
@@ -214,9 +213,7 @@ const parseConfigVarValue = (value?: unknown) => {
     }
 };
 
-const getEnvConfig = (envPath: string) => {
-    dotenv.config({ path: envPath });
-
+const getEnvConfig = () => {
     return {
         OCO_MODEL: process.env.OCO_MODEL,
         OCO_API_URL: process.env.OCO_API_URL,
@@ -276,7 +273,6 @@ const mergeConfigs = (main: Partial<ConfigType>, fallback: ConfigType) => {
 
 interface GetConfigOptions {
     globalPath?: string;
-    envPath?: string;
     setDefaultValues?: boolean;
 }
 
@@ -299,11 +295,8 @@ const cleanUndefinedValues = (config: ConfigType) => {
     );
 };
 
-export const getConfig = ({
-    envPath = defaultEnvPath,
-    globalPath = defaultConfigPath,
-}: GetConfigOptions = {}): ConfigType => {
-    const envConfig = getEnvConfig(envPath);
+export const getConfig = ({ globalPath = defaultConfigPath }: GetConfigOptions = {}): ConfigType => {
+    const envConfig = getEnvConfig();
     const globalConfig = getGlobalConfig(globalPath);
 
     const config = mergeConfigs(envConfig, globalConfig);
