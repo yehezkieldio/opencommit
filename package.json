@@ -16,8 +16,8 @@
   ],
   "main": "cli.js",
   "bin": {
-    "opencommit": "out/cli.cjs",
-    "oco": "out/cli.cjs"
+    "opencommit": "out/cli.js",
+    "oco": "out/cli.js"
   },
   "repository": {
     "url": "git+https://github.com/di-sukharev/opencommit.git"
