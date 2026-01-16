@@ -11,11 +11,14 @@ export const IDENTITY = "You are to act as an author of a commit message in git.
  */
 const SINGLE_MESSAGE_CONSTRAINT = `
 ## Critical Output Rules:
-- You MUST generate exactly ONE commit message
-- NEVER output multiple commit headers (e.g., "feat: X\\n\\nfix: Y" is INVALID)
+- You MUST generate exactly ONE single-line commit message
+- Output ONLY the commit header line, nothing else
+- NO bullet points, NO body text, NO descriptions
+- NO line breaks in your output
 - If multiple things changed, pick the most significant type
-- Use the commit body to mention secondary changes if needed
-- When in doubt, prefer: feat > fix > refactor > chore`;
+- When in doubt, prefer: feat > fix > refactor > chore
+- Example valid output: "feat(auth): add user login endpoint"
+- Example INVALID output: "feat(auth): add user login\n- added validation\n- added tests"`;
 
 /**
  * SUMMARY_PROMPT for Map phase - analyzes diff chunks and extracts key changes.
@@ -23,22 +26,18 @@ const SINGLE_MESSAGE_CONSTRAINT = `
  */
 export const SUMMARY_PROMPT: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
     role: "system",
-    content: `You are a code analyst. Analyze the following git diff and extract the key technical changes.
+    content: `You are a code analyst. Analyze the following git diff and extract the primary change.
 
 ## Instructions:
-- Return a concise bulleted list of changes (3-5 items max)
-- Focus on WHAT changed, not WHY
-- Include file names where relevant
+- Return a SINGLE sentence describing the main change
+- Focus on WHAT changed at a high level
+- Do NOT return bulleted lists
 - Do NOT write a commit message or commit header
 - Do NOT use prefixes like "feat:", "fix:", etc.
-- Be technical and specific
-- Keep each bullet point to one line
+- Be concise - one sentence only
 
 ## Example Output:
-- Added user authentication middleware in \`auth.ts\`
-- Updated API endpoint path from /v1 to /v2 in \`routes.ts\`
-- Fixed null pointer exception in error handler
-- Removed deprecated logging utility`,
+Added user authentication middleware with JWT validation`,
 };
 
 /**
@@ -178,16 +177,6 @@ type(scope): description
 
 const getCommitConvention = () => COMMIT_GUIDELINES;
 
-const getDescriptionInstruction = () =>
-    config.OCO_DESCRIPTION
-        ? 'Add a short description of WHY the changes are done after the commit message. Don\'t start it with "This commit", just describe the changes.'
-        : "Don't add any descriptions to the commit, only commit message.";
-
-const getOneLineCommitInstruction = () =>
-    config.OCO_ONE_LINE_COMMIT
-        ? "Craft a concise, single sentence, commit message that encapsulates all changes made, with an emphasis on the primary updates. If the modifications share a common theme or scope, mention it succinctly; otherwise, leave the scope out to maintain focus. The goal is to provide a clear and unified overview of the changes in one single message."
-        : "";
-
 const getScopeInstruction = () =>
     config.OCO_OMIT_SCOPE
         ? "Do not include a scope in the commit message format. Use the format: <type>: <subject>"
@@ -209,29 +198,26 @@ export const getThemeSynthesisPrompt = (context: string): OpenAI.Chat.Completion
     content: (() => {
         const mission = `${IDENTITY}
 
-You will receive HIGH-LEVEL THEMES extracted from a commit, each with a file count indicating scope.
-Your task is to write **exactly ONE** commit message that captures the primary intent.`;
+You will receive HIGH-LEVEL THEMES extracted from a commit.
+Your task is to write **exactly ONE single-line** commit message. Output ONLY the header line, nothing else.`;
 
-        const selectionRules = `## Theme Selection Rules:
+        const selectionRules = `## Rules:
 - Choose the theme affecting the MOST files as the primary focus
 - If themes have equal file counts, prefer: feature > fix > refactor > chore
-- Secondary themes may be mentioned in the commit body if appropriate
-- Do NOT reference individual files unless essential for clarity`;
+- Do NOT include bullet points or body text
+- Do NOT include line breaks
+- Output ONLY the single commit header line`;
 
         const conventionGuidelines = COMMIT_GUIDELINES;
-        const descriptionGuideline = getDescriptionInstruction();
-        const oneLineCommitGuideline = getOneLineCommitInstruction();
         const scopeInstruction = getScopeInstruction();
         const generalGuidelines =
-            "Use the present tense. Lines must not be longer than 74 characters. Use English for the commit message.";
+            "Use the present tense. Output must be a single line under 74 characters. Use English.";
         const userInputContext = userInputCodeContext(context);
 
         return `${mission}
 ${selectionRules}
 ${conventionGuidelines}
 ${SINGLE_MESSAGE_CONSTRAINT}
-${descriptionGuideline}
-${oneLineCommitGuideline}
 ${scopeInstruction}
 ${generalGuidelines}
 ${userInputContext}`;
@@ -241,18 +227,16 @@ ${userInputContext}`;
 const INIT_MAIN_PROMPT = (context: string): OpenAI.Chat.Completions.ChatCompletionMessageParam => ({
     role: "system",
     content: (() => {
-        const missionStatement = `${IDENTITY} Your mission is to create clean and comprehensive commit messages following the Conventional Commit Convention and explain WHAT were the changes and mainly WHY the changes were done.`;
+        const missionStatement = `${IDENTITY} Your mission is to create a single-line commit message following the Conventional Commit Convention.`;
         const diffInstruction =
-            "I'll send you an output of 'git diff --staged' command, and you are to convert it into a commit message.";
+            "I'll send you an output of 'git diff --staged' command, and you are to convert it into a single-line commit message. Output ONLY the commit header, nothing else.";
         const conventionGuidelines = getCommitConvention();
-        const descriptionGuideline = getDescriptionInstruction();
-        const oneLineCommitGuideline = getOneLineCommitInstruction();
         const scopeInstruction = getScopeInstruction();
         const generalGuidelines =
-            "Use the present tense. Lines must not be longer than 74 characters. Use English for the commit message.";
+            "Use the present tense. Output must be a single line under 74 characters. Use English. NO bullet points, NO body text.";
         const userInputContext = userInputCodeContext(context);
 
-        return `${missionStatement}\n${diffInstruction}\n${conventionGuidelines}\n${SINGLE_MESSAGE_CONSTRAINT}\n${descriptionGuideline}\n${oneLineCommitGuideline}\n${scopeInstruction}\n${generalGuidelines}\n${userInputContext}`;
+        return `${missionStatement}\n${diffInstruction}\n${conventionGuidelines}\n${SINGLE_MESSAGE_CONSTRAINT}\n${scopeInstruction}\n${generalGuidelines}\n${userInputContext}`;
     })(),
 });
 
@@ -290,21 +274,17 @@ export const getSynthesisPrompt = (context: string): OpenAI.Chat.Completions.Cha
         const mission = `${IDENTITY}
 
 You will receive a summary of all changes across multiple files/chunks in a git commit.
-Your task is to write **exactly ONE** commit message that covers all changes.`;
+Your task is to write **exactly ONE single-line** commit message. Output ONLY the header line, nothing else.`;
 
         const conventionGuidelines = COMMIT_GUIDELINES;
-        const descriptionGuideline = getDescriptionInstruction();
-        const oneLineCommitGuideline = getOneLineCommitInstruction();
         const scopeInstruction = getScopeInstruction();
         const generalGuidelines =
-            "Use the present tense. Lines must not be longer than 74 characters. Use English for the commit message.";
+            "Use the present tense. Output must be a single line under 74 characters. Use English. NO bullet points, NO body text.";
         const userInputContext = userInputCodeContext(context);
 
         return `${mission}
 ${conventionGuidelines}
 ${SINGLE_MESSAGE_CONSTRAINT}
-${descriptionGuideline}
-${oneLineCommitGuideline}
 ${scopeInstruction}
 ${generalGuidelines}
 ${userInputContext}`;

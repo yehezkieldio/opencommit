@@ -32,7 +32,7 @@ const generateCommitMessageFromGitDiff = async ({
     diff,
     extraArgs,
     context = "",
-    skipCommitConfirmation = false,
+    skipCommitConfirmation = true,
 }: GenerateCommitMessageFromGitDiffParams): Promise<void> => {
     await assertGitRepo();
     const commitGenerationSpinner = spinner();
@@ -49,14 +49,8 @@ const generateCommitMessageFromGitDiff = async ({
             commitMessage = messageTemplate.replace(config.OCO_MESSAGE_TEMPLATE_PLACEHOLDER, commitMessage);
         }
 
-        commitGenerationSpinner.stop("📝 Commit message generated");
-
-        outro(
-            `Generated commit message:
-${chalk.grey("——————————————————")}
-${commitMessage}
-${chalk.grey("——————————————————")}`
-        );
+        commitGenerationSpinner.message("Generated");
+        commitGenerationSpinner.stop(commitMessage);
 
         const userAction = skipCommitConfirmation
             ? "Yes"
@@ -250,7 +244,7 @@ export async function commit(
     }
 
     stagedFilesSpinner.stop(
-        `${stagedFiles.length} staged files:\n${stagedFiles.map((file) => `  ${file}`).join("\n")}`
+        `${stagedFiles.length} staged files:\n ${stagedFiles.map((file) => `  ${file}`).join("\n")}`
     );
 
     const [, generateCommitError] = await trytm(
