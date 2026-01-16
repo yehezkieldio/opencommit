@@ -597,7 +597,7 @@ var AzureEngine = class {
 			const message = (await this.client.chat.completions.create({
 				model: this.config.model,
 				messages
-			})).choices[0].message;
+			})).choices[0]?.message;
 			if (message?.content === null) return;
 			const content = message?.content;
 			return removeContentTags(content, "think");
@@ -657,9 +657,9 @@ const DIFF_FILE_REGEX = /^a\/(.+?)\s+b\//;
 const FALLBACK_REGEX = /\+\+\+ b\/(.+)/;
 function extractFileName(fileDiff) {
 	const match = fileDiff.match(DIFF_FILE_REGEX);
-	if (match) return match[1];
+	if (match) return match?.[1] ?? "unknown";
 	const plusMatch = fileDiff.match(FALLBACK_REGEX);
-	if (plusMatch) return plusMatch[1];
+	if (plusMatch) return plusMatch?.[1] ?? "unknown";
 	return "unknown";
 }
 
@@ -667,6 +667,7 @@ function extractFileName(fileDiff) {
 //#region src/utils/merge-diffs.ts
 function mergeDiffs(arr, maxStringLength) {
 	const mergedArr = [];
+	if (!arr.length) return [];
 	let currentItem = arr[0];
 	for (const item of arr.slice(1)) if (tokenCount(currentItem + item) <= maxStringLength) currentItem += item;
 	else {
@@ -826,12 +827,12 @@ function validateCommitMessage(message, options = {}) {
 	const { maxSubjectLength = 50, requireScope = false } = options;
 	const errors = [];
 	const lines = message.trim().split("\n");
-	if (lines.length === 0 || !lines[0].trim()) return {
+	if (lines.length === 0 || !lines[0]?.trim()) return {
 		isValid: false,
 		errors: ["Empty commit message"],
 		headerCount: 0
 	};
-	const firstLine = lines[0].trim();
+	const firstLine = lines[0]?.trim() ?? "";
 	if (!HEADER_PATTERN.test(firstLine)) errors.push(`First line is not a valid conventional commit header: "${firstLine}"`);
 	const colonIndex = firstLine.indexOf(":");
 	if (colonIndex > -1) {
@@ -896,7 +897,7 @@ Output ONLY the rewritten commit message, nothing else.`
 * @returns Collapsed commit message
 */
 function collapseMultipleHeaders(message, validation) {
-	if (!validation.firstHeader) return `chore: ${message.trim().split("\n")[0].substring(0, 50)}`;
+	if (!validation.firstHeader) return `chore: ${(message.trim().split("\n")[0] ?? "").substring(0, 50)}`;
 	if (!validation.additionalHeaders || validation.additionalHeaders.length === 0) return message;
 	const lines = message.split("\n");
 	const bodyLines = [];
@@ -1170,8 +1171,7 @@ async function recursivelyReduceSummaries(summaries, maxTokens, depth) {
 	if (currentBatch.length > 0) batches.push(currentBatch);
 	if (batches.length <= 1) return sliceToTokenLimit(summaries.map((s) => s.summary).join("\n"), maxTokens);
 	const reducedSummaries = [];
-	for (let i = 0; i < batches.length; i++) {
-		const batch = batches[i];
+	for (const [i, batch] of batches.entries()) {
 		const batchText = batch.map((s) => s.summary).join("\n");
 		const allFiles = batch.flatMap((s) => s.files);
 		const messages = [SUMMARY_PROMPT, {
@@ -1307,7 +1307,7 @@ const getGitRemotes = async () => {
 	return stdout.split("\n").filter((remote) => Boolean(remote.trim()));
 };
 const checkMessageTemplate = (extraArgs$1) => {
-	for (const key in extraArgs$1) if (extraArgs$1[key].includes(config.OCO_MESSAGE_TEMPLATE_PLACEHOLDER)) return extraArgs$1[key];
+	for (const arg of extraArgs$1) if (arg.includes(config.OCO_MESSAGE_TEMPLATE_PLACEHOLDER)) return arg;
 	return false;
 };
 const generateCommitMessageFromGitDiff = async ({ diff, extraArgs: extraArgs$1, context = "", skipCommitConfirmation = false }) => {

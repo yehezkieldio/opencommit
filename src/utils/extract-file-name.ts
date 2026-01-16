@@ -12,13 +12,13 @@ export function extractFileName(fileDiff: string): string {
     // Match pattern: "a/path/to/file.ts b/path/to/file.ts"
     const match = fileDiff.match(DIFF_FILE_REGEX);
     if (match) {
-        return match[1];
+        return match?.[1] ?? "unknown";
     }
 
     // Fallback: try to get from +++ line
     const plusMatch = fileDiff.match(FALLBACK_REGEX);
     if (plusMatch) {
-        return plusMatch[1];
+        return plusMatch?.[1] ?? "unknown";
     }
 
     return "unknown";

@@ -42,7 +42,7 @@ export class AzureEngine implements AiEngine {
                 messages,
             });
 
-            const message = data.choices[0].message;
+            const message = data.choices[0]?.message;
 
             if (message?.content === null) {
                 return undefined;

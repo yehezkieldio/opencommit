@@ -15,8 +15,8 @@ const getGitRemotes = async () => {
 
 // Check for the presence of message templates
 const checkMessageTemplate = (extraArgs: string[]): string | false => {
-    for (const key in extraArgs) {
-        if (extraArgs[key].includes(config.OCO_MESSAGE_TEMPLATE_PLACEHOLDER)) return extraArgs[key];
+    for (const arg of extraArgs) {
+        if (arg.includes(config.OCO_MESSAGE_TEMPLATE_PLACEHOLDER)) return arg;
     }
     return false;
 };
@@ -125,7 +125,7 @@ ${chalk.grey("——————————————————")}`
 
                     pushSpinner.start(`Running 'git push ${remotes[0]}'`);
 
-                    const { stdout } = await execa("git", ["push", "--verbose", remotes[0]]);
+                    const { stdout } = await execa("git", ["push", "--verbose", remotes[0] as string]);
 
                     pushSpinner.stop(`${chalk.green("✔")} Successfully pushed all commits to ${remotes[0]}`);
 

@@ -1,1 +1,1 @@
-Personal fork of [OpenCommit](https://github.com/di-sukharev/opencommit).
+A personal fork of [OpenCommit](https://github.com/di-sukharev/opencommit).

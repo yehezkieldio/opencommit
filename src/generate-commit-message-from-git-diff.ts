@@ -419,8 +419,7 @@ async function recursivelyReduceSummaries(
 
     // Re-summarize each batch with exponential backoff
     const reducedSummaries: ChunkSummary[] = [];
-    for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
+    for (const [i, batch] of batches.entries()) {
         const batchText = batch.map((s) => s.summary).join("\n");
         const allFiles = batch.flatMap((s) => s.files);
 

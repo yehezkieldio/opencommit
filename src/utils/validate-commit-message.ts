@@ -76,7 +76,7 @@ export function validateCommitMessage(message: string, options: ValidationOption
     const errors: string[] = [];
     const lines = message.trim().split("\n");
 
-    if (lines.length === 0 || !lines[0].trim()) {
+    if (lines.length === 0 || !lines[0]?.trim()) {
         return {
             isValid: false,
             errors: ["Empty commit message"],
@@ -84,7 +84,7 @@ export function validateCommitMessage(message: string, options: ValidationOption
         };
     }
 
-    const firstLine = lines[0].trim();
+    const firstLine = lines[0]?.trim() ?? "";
 
     // Check if first line is a valid header
     if (!HEADER_PATTERN.test(firstLine)) {
@@ -185,7 +185,7 @@ Output ONLY the rewritten commit message, nothing else.`,
 export function collapseMultipleHeaders(message: string, validation: ValidationResult): string {
     if (!validation.firstHeader) {
         // No valid header found, create a generic one
-        const firstLine = message.trim().split("\n")[0];
+        const firstLine = message.trim().split("\n")[0] ?? "";
         return `chore: ${firstLine.substring(0, 50)}`;
     }
 
