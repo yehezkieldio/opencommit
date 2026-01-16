@@ -86,13 +86,13 @@ ${chalk.grey('——————————————————')}`
     const userAction = skipCommitConfirmation
       ? 'Yes'
       : await select({
-          message: 'Confirm the commit message?',
-          options: [
-            { value: 'Yes', label: 'Yes' },
-            { value: 'No', label: 'No' },
-            { value: 'Edit', label: 'Edit' }
-          ]
-        });
+        message: 'Confirm the commit message?',
+        options: [
+          { value: 'Yes', label: 'Yes' },
+          { value: 'No', label: 'No' },
+          { value: 'Edit', label: 'Edit' }
+        ]
+      });
 
     if (isCancel(userAction)) process.exit(1);
 
@@ -102,7 +102,21 @@ ${chalk.grey('——————————————————')}`
         initialValue: commitMessage
       });
 
-      commitMessage = textResponse.toString();
+      // Handle cancel during edit
+      if (isCancel(textResponse)) {
+        outro('Commit cancelled');
+        process.exit(1);
+      }
+
+      const editedMessage = textResponse?.toString().trim() ?? '';
+
+      // Prevent committing empty messages
+      if (!editedMessage) {
+        outro(chalk.red('Empty commit message. Commit cancelled.'));
+        process.exit(1);
+      }
+
+      commitMessage = editedMessage;
     }
 
     if (userAction === 'Yes' || userAction === 'Edit') {
@@ -150,8 +164,7 @@ ${chalk.grey('——————————————————')}`
           ]);
 
           pushSpinner.stop(
-            `${chalk.green('✔')} Successfully pushed all commits to ${
-              remotes[0]
+            `${chalk.green('✔')} Successfully pushed all commits to ${remotes[0]
             }`
           );
 

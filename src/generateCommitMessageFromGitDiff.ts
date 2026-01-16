@@ -6,6 +6,9 @@ import { extractFileName } from './utils/extractFileName';
 import { mergeDiffs } from './utils/mergeDiffs';
 import { tokenCount } from './utils/tokenCount';
 import { i18n, I18nLocals } from './i18n';
+import { computeTokenBudget, TokenBudgetError } from './utils/tokenBudget';
+import { sliceToTokenLimit, splitToTokenChunks } from './utils/sliceToTokenLimit';
+import { ensureValidCommitMessage } from './utils/validateCommitMessage';
 
 const config = getConfig();
 const MAX_TOKENS_INPUT = config.OCO_TOKENS_MAX_INPUT;
@@ -48,8 +51,18 @@ export enum GenerateCommitMessageErrorEnum {
 // ============================================================================
 
 const ADJUSTMENT_FACTOR = 20;
-const DIFF_SEPARATOR = 'diff --git ';
-const RATE_LIMIT_DELAY_MS = 1000;
+/** Regex pattern for splitting diffs by file - anchored to line start */
+const DIFF_FILE_PATTERN = /^diff --git /m;
+/** Regex pattern for splitting hunks - anchored to line start */
+const HUNK_PATTERN = /^@@ /m;
+/** Bounded concurrency for parallel API calls */
+const MAX_CONCURRENCY = 2;
+/** Initial delay for exponential backoff (ms) */
+const INITIAL_BACKOFF_MS = 500;
+/** Maximum delay for exponential backoff (ms) */
+const MAX_BACKOFF_MS = 10000;
+/** Maximum recursion depth for reduce phase */
+const MAX_REDUCTION_DEPTH = 5;
 
 // ============================================================================
 // Helper Functions
@@ -70,31 +83,45 @@ const generateCommitMessageChatCompletionPrompt = async (
 };
 
 /**
- * Delays execution for rate limiting purposes.
+ * Delays execution with exponential backoff and jitter.
+ * @param attempt - The current attempt number (0-indexed)
+ * @returns Promise that resolves after the delay
  */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function exponentialBackoff(attempt: number): Promise<void> {
+  const baseDelay = Math.min(INITIAL_BACKOFF_MS * Math.pow(2, attempt), MAX_BACKOFF_MS);
+  // Add jitter: random value between 0 and 50% of base delay
+  const jitter = Math.random() * baseDelay * 0.5;
+  const delay = baseDelay + jitter;
+  return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
 /**
  * Splits a diff string by lines when it exceeds token limits.
- * Used as a fallback when file-level splitting isn't granular enough.
+ * Uses token-aware slicing to guarantee each chunk fits within limits.
  */
 function splitDiffByLines(diff: string, maxTokens: number): string[] {
-  const lines = diff.split('\n');
-  const chunks: string[] = [];
-  let currentChunk = '';
-
   if (maxTokens <= 0) {
     throw new Error(GenerateCommitMessageErrorEnum.outputTokensTooHigh);
   }
 
-  for (let line of lines) {
-    // Handle extremely long single lines
-    while (tokenCount(line) > maxTokens) {
-      const subLine = line.substring(0, maxTokens);
-      line = line.substring(maxTokens);
-      chunks.push(subLine);
+  const lines = diff.split('\n');
+  const chunks: string[] = [];
+  let currentChunk = '';
+
+  for (const line of lines) {
+    const lineTokens = tokenCount(line);
+
+    // Handle extremely long single lines with token-aware slicing
+    if (lineTokens > maxTokens) {
+      // Push current chunk if exists
+      if (currentChunk) {
+        chunks.push(currentChunk);
+        currentChunk = '';
+      }
+      // Split the long line into token-safe chunks
+      const lineChunks = splitToTokenChunks(line, maxTokens);
+      chunks.push(...lineChunks);
+      continue;
     }
 
     const potentialChunk = currentChunk + (currentChunk ? '\n' : '') + line;
@@ -115,18 +142,21 @@ function splitDiffByLines(diff: string, maxTokens: number): string[] {
 // ============================================================================
 
 /**
- * Splits a diff into chunks by file boundaries, respecting token limits.
+ * Splits a diff into chunks by file boundaries using regex anchors.
  * Prioritizes keeping each file together, but will split large files if needed.
  */
 function splitDiffByFiles(diff: string, maxTokens: number): DiffChunk[] {
-  const fileDiffs = diff.split(DIFF_SEPARATOR).slice(1);
+  // Use regex split anchored to line start for robustness
+  const parts = diff.split(DIFF_FILE_PATTERN);
+  // First element is empty or content before first diff
+  const fileDiffs = parts.slice(1).map(part => 'diff --git ' + part);
+
   const chunks: DiffChunk[] = [];
   let currentChunk: DiffChunk = { content: '', files: [], tokenCount: 0 };
 
   for (const fileDiff of fileDiffs) {
-    const fullFileDiff = DIFF_SEPARATOR + fileDiff;
-    const fileTokens = tokenCount(fullFileDiff);
-    const fileName = extractFileName(fileDiff);
+    const fileTokens = tokenCount(fileDiff);
+    const fileName = extractFileName(fileDiff.substring('diff --git '.length));
 
     // Would adding this file exceed the limit?
     if (currentChunk.tokenCount + fileTokens > maxTokens && currentChunk.content) {
@@ -147,14 +177,14 @@ function splitDiffByFiles(diff: string, maxTokens: number): DiffChunk[] {
       const subChunks = splitLargeFileDiff(fileDiff, maxTokens);
       for (const subContent of subChunks) {
         chunks.push({
-          content: DIFF_SEPARATOR + subContent,
+          content: subContent,
           files: [fileName],
-          tokenCount: tokenCount(DIFF_SEPARATOR + subContent)
+          tokenCount: tokenCount(subContent)
         });
       }
     } else {
       // Add file to current chunk
-      currentChunk.content += fullFileDiff;
+      currentChunk.content += fileDiff;
       currentChunk.files.push(fileName);
       currentChunk.tokenCount += fileTokens;
     }
@@ -170,16 +200,32 @@ function splitDiffByFiles(diff: string, maxTokens: number): DiffChunk[] {
 
 /**
  * Splits a large single-file diff into smaller chunks by hunk boundaries.
+ * Uses regex anchored to line start for reliable hunk detection.
  */
 function splitLargeFileDiff(fileDiff: string, maxTokens: number): string[] {
-  const hunkSeparator = '@@ ';
-  const [fileHeader, ...hunks] = fileDiff.split(hunkSeparator);
+  // Find the file header (everything before first hunk)
+  const hunkMatch = fileDiff.match(HUNK_PATTERN);
+  if (!hunkMatch || hunkMatch.index === undefined) {
+    // No hunks found - split by lines
+    return splitDiffByLines(fileDiff, maxTokens);
+  }
+
+  const fileHeader = fileDiff.substring(0, hunkMatch.index);
+  const hunksContent = fileDiff.substring(hunkMatch.index);
+  const headerTokens = tokenCount(fileHeader);
+
+  // If header alone exceeds max, fall back to line splitting
+  if (headerTokens >= maxTokens) {
+    return splitDiffByLines(fileDiff, maxTokens);
+  }
+
+  // Split hunks using regex
+  const hunkParts = hunksContent.split(HUNK_PATTERN);
+  const hunks = hunkParts.slice(1).map(part => '@@ ' + part);
 
   // Try to merge hunks into reasonably-sized chunks
-  const mergedHunks = mergeDiffs(
-    hunks.map((hunk) => hunkSeparator + hunk),
-    maxTokens - tokenCount(fileHeader) // Reserve space for header
-  );
+  const maxHunkTokens = maxTokens - headerTokens;
+  const mergedHunks = mergeDiffs(hunks, maxHunkTokens);
 
   const result: string[] = [];
   for (const hunk of mergedHunks) {
@@ -197,38 +243,86 @@ function splitLargeFileDiff(fileDiff: string, maxTokens: number): string[] {
 }
 
 /**
+ * Runs promises with bounded concurrency.
+ */
+async function runWithConcurrency<T>(
+  items: T[],
+  fn: (item: T, index: number) => Promise<void>,
+  concurrency: number
+): Promise<void> {
+  const queue = items.map((item, index) => ({ item, index }));
+  const running: Promise<void>[] = [];
+
+  while (queue.length > 0 || running.length > 0) {
+    // Fill up to concurrency limit
+    while (running.length < concurrency && queue.length > 0) {
+      const { item, index } = queue.shift()!;
+      const promise = fn(item, index).finally(() => {
+        const idx = running.indexOf(promise);
+        if (idx > -1) running.splice(idx, 1);
+      });
+      running.push(promise);
+    }
+
+    // Wait for at least one to complete
+    if (running.length > 0) {
+      await Promise.race(running);
+    }
+  }
+}
+
+/**
  * MAP PHASE: Analyzes each diff chunk and extracts a summary of changes.
- * Returns bullet-point summaries without commit message formatting.
+ * Uses bounded concurrency and exponential backoff for reliability.
  */
 async function getDiffSummaries(chunks: DiffChunk[]): Promise<ChunkSummary[]> {
   const engine = getEngine();
-  const summaries: ChunkSummary[] = [];
+  const summaries: ChunkSummary[] = new Array(chunks.length);
+  let lastAttemptTime = 0;
 
-  for (const chunk of chunks) {
-    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-      SUMMARY_PROMPT,
-      { role: 'user', content: chunk.content }
-    ];
+  await runWithConcurrency(
+    chunks,
+    async (chunk, index) => {
+      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        SUMMARY_PROMPT,
+        { role: 'user', content: chunk.content }
+      ];
 
-    try {
-      const summary = await engine.generateCommitMessage(messages);
-      summaries.push({
-        summary: summary || `Changes in: ${chunk.files.join(', ')}`,
-        files: chunk.files
-      });
-    } catch (error) {
-      // Fallback: use file names as summary if LLM fails
-      summaries.push({
+      // Ensure minimum delay between requests
+      const now = Date.now();
+      const timeSinceLastRequest = now - lastAttemptTime;
+      if (timeSinceLastRequest < INITIAL_BACKOFF_MS) {
+        await exponentialBackoff(0);
+      }
+      lastAttemptTime = Date.now();
+
+      let attempts = 0;
+      const maxAttempts = 3;
+
+      while (attempts < maxAttempts) {
+        try {
+          const summary = await engine.generateCommitMessage(messages);
+          summaries[index] = {
+            summary: summary || `Changes in: ${chunk.files.join(', ')}`,
+            files: chunk.files
+          };
+          return;
+        } catch (error) {
+          attempts++;
+          if (attempts < maxAttempts) {
+            await exponentialBackoff(attempts);
+          }
+        }
+      }
+
+      // Fallback: use file names as summary if all attempts fail
+      summaries[index] = {
         summary: `Changes in: ${chunk.files.join(', ')}`,
         files: chunk.files
-      });
-    }
-
-    // Rate limiting to avoid API throttling
-    if (chunks.indexOf(chunk) < chunks.length - 1) {
-      await delay(RATE_LIMIT_DELAY_MS);
-    }
-  }
+      };
+    },
+    MAX_CONCURRENCY
+  );
 
   return summaries;
 }
@@ -265,7 +359,7 @@ async function synthesizeCommitMessage(
 
   // Recursive reduction if summaries are too long
   if (tokenCount(combinedSummary) > maxSummaryTokens) {
-    finalSummary = await recursivelyReduceSummaries(summaries, maxSummaryTokens);
+    finalSummary = await recursivelyReduceSummaries(summaries, maxSummaryTokens, 0);
   }
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -281,17 +375,25 @@ async function synthesizeCommitMessage(
     throw new Error(GenerateCommitMessageErrorEnum.emptyMessage);
   }
 
-  return commitMessage;
+  // Validate and repair if necessary
+  return await ensureValidCommitMessage(commitMessage);
 }
 
 /**
  * Recursively reduces summaries when they exceed token limits.
- * Groups summaries and re-summarizes them.
+ * Uses token-aware trimming and has a max depth safeguard.
  */
 async function recursivelyReduceSummaries(
   summaries: ChunkSummary[],
-  maxTokens: number
+  maxTokens: number,
+  depth: number
 ): Promise<string> {
+  // Safeguard against infinite recursion
+  if (depth >= MAX_REDUCTION_DEPTH) {
+    const combined = summaries.map((s) => s.summary).join('\n');
+    return sliceToTokenLimit(combined, maxTokens);
+  }
+
   const engine = getEngine();
 
   // Group summaries into batches that fit within limits
@@ -313,17 +415,16 @@ async function recursivelyReduceSummaries(
     batches.push(currentBatch);
   }
 
-  // If only one batch, just truncate
+  // If only one batch, use token-aware truncation
   if (batches.length <= 1) {
-    return summaries
-      .map((s) => s.summary)
-      .join('\n')
-      .substring(0, maxTokens * 3); // Rough char estimate
+    const combined = summaries.map((s) => s.summary).join('\n');
+    return sliceToTokenLimit(combined, maxTokens);
   }
 
-  // Re-summarize each batch
+  // Re-summarize each batch with exponential backoff
   const reducedSummaries: ChunkSummary[] = [];
-  for (const batch of batches) {
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
     const batchText = batch.map((s) => s.summary).join('\n');
     const allFiles = batch.flatMap((s) => s.files);
 
@@ -332,26 +433,31 @@ async function recursivelyReduceSummaries(
       { role: 'user', content: `Consolidate these changes into a shorter summary:\n\n${batchText}` }
     ];
 
-    try {
-      const reduced = await engine.generateCommitMessage(messages);
-      reducedSummaries.push({
-        summary: reduced || batchText.substring(0, 500),
-        files: allFiles
-      });
-    } catch {
-      reducedSummaries.push({
-        summary: batchText.substring(0, 500),
-        files: allFiles
-      });
+    let reduced: string | null | undefined = null;
+    let attempts = 0;
+    while (attempts < 3 && !reduced) {
+      try {
+        reduced = await engine.generateCommitMessage(messages);
+      } catch {
+        attempts++;
+        if (attempts < 3) await exponentialBackoff(attempts);
+      }
     }
 
-    await delay(RATE_LIMIT_DELAY_MS);
+    reducedSummaries.push({
+      summary: reduced || sliceToTokenLimit(batchText, 500),
+      files: allFiles
+    });
+
+    if (i < batches.length - 1) {
+      await exponentialBackoff(0);
+    }
   }
 
   // Check if we need another round of reduction
   const combinedReduced = reducedSummaries.map((s) => s.summary).join('\n\n');
   if (tokenCount(combinedReduced) > maxTokens) {
-    return recursivelyReduceSummaries(reducedSummaries, maxTokens);
+    return recursivelyReduceSummaries(reducedSummaries, maxTokens, depth + 1);
   }
 
   return combinedReduced;
@@ -378,22 +484,24 @@ export const generateCommitMessageByDiff = async (
   try {
     const INIT_MESSAGES_PROMPT = await getMainCommitPrompt(context);
 
-    const INIT_MESSAGES_PROMPT_LENGTH = INIT_MESSAGES_PROMPT.map(
-      (msg) => tokenCount(msg.content as string) + 4
-    ).reduce((a, b) => a + b, 0);
+    // Use centralized token budget computation
+    const budget = computeTokenBudget({
+      promptMessages: INIT_MESSAGES_PROMPT,
+      maxInputTokens: MAX_TOKENS_INPUT,
+      maxOutputTokens: MAX_TOKENS_OUTPUT,
+      adjustmentFactor: ADJUSTMENT_FACTOR
+    });
 
-    const MAX_DIFF_TOKENS =
-      MAX_TOKENS_INPUT -
-      ADJUSTMENT_FACTOR -
-      INIT_MESSAGES_PROMPT_LENGTH -
-      MAX_TOKENS_OUTPUT;
+    if (!budget.isValid) {
+      throw new TokenBudgetError(budget.errorReason!);
+    }
 
     const diffTokens = tokenCount(diff);
 
     // ========================================================================
     // Small Diff Path: Direct Generation
     // ========================================================================
-    if (diffTokens <= MAX_DIFF_TOKENS) {
+    if (diffTokens <= budget.maxDiffTokens) {
       const messages = await generateCommitMessageChatCompletionPrompt(diff, context);
       const engine = getEngine();
       const commitMessage = await engine.generateCommitMessage(messages);
@@ -402,7 +510,8 @@ export const generateCommitMessageByDiff = async (
         throw new Error(GenerateCommitMessageErrorEnum.emptyMessage);
       }
 
-      return commitMessage;
+      // Validate and repair if necessary
+      return await ensureValidCommitMessage(commitMessage);
     }
 
     // ========================================================================
@@ -410,7 +519,7 @@ export const generateCommitMessageByDiff = async (
     // ========================================================================
 
     // MAP: Split diff into chunks and summarize each
-    const chunks = splitDiffByFiles(diff, MAX_DIFF_TOKENS);
+    const chunks = splitDiffByFiles(diff, budget.maxDiffTokens);
     const summaries = await getDiffSummaries(chunks);
 
     // REDUCE: Synthesize a single commit message from all summaries

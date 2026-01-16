@@ -1677,9 +1677,9 @@ var require_timers = __commonJS({
       }
     }
     var Timeout = class {
-      constructor(callback, delay4, opaque) {
+      constructor(callback, delay3, opaque) {
         this.callback = callback;
-        this.delay = delay4;
+        this.delay = delay3;
         this.opaque = opaque;
         this.state = -2;
         this.refresh();
@@ -1698,8 +1698,8 @@ var require_timers = __commonJS({
       }
     };
     module2.exports = {
-      setTimeout(callback, delay4, opaque) {
-        return delay4 < 1e3 ? setTimeout(callback, delay4, opaque) : new Timeout(callback, delay4, opaque);
+      setTimeout(callback, delay3, opaque) {
+        return delay3 < 1e3 ? setTimeout(callback, delay3, opaque) : new Timeout(callback, delay3, opaque);
       },
       clearTimeout(timeout) {
         if (timeout instanceof Timeout) {
@@ -10803,7 +10803,7 @@ var require_mock_utils = __commonJS({
       if (mockDispatch2.data.callback) {
         mockDispatch2.data = { ...mockDispatch2.data, ...mockDispatch2.data.callback(opts) };
       }
-      const { data: { statusCode, data, headers, trailers, error }, delay: delay4, persist } = mockDispatch2;
+      const { data: { statusCode, data, headers, trailers, error }, delay: delay3, persist } = mockDispatch2;
       const { timesInvoked, times } = mockDispatch2;
       mockDispatch2.consumed = !persist && timesInvoked >= times;
       mockDispatch2.pending = timesInvoked < times;
@@ -10812,10 +10812,10 @@ var require_mock_utils = __commonJS({
         handler.onError(error);
         return true;
       }
-      if (typeof delay4 === "number" && delay4 > 0) {
+      if (typeof delay3 === "number" && delay3 > 0) {
         setTimeout(() => {
           handleReply(this[kDispatches]);
-        }, delay4);
+        }, delay3);
       } else {
         handleReply(this[kDispatches]);
       }
@@ -56089,7 +56089,7 @@ var require_retries = __commonJS({
             retryInterval = initialInterval * Math.pow(x2, exponent) + Math.random() * 1e3;
           }
           const d5 = Math.min(retryInterval, maxInterval);
-          await delay4(d5);
+          await delay3(d5);
           x2++;
         }
       }
@@ -56110,8 +56110,8 @@ var require_retries = __commonJS({
       }
       return 0;
     }
-    async function delay4(delay5) {
-      return new Promise((resolve) => setTimeout(resolve, delay5));
+    async function delay3(delay4) {
+      return new Promise((resolve) => setTimeout(resolve, delay4));
     }
   }
 });
@@ -87940,6 +87940,235 @@ function mergeDiffs(arr, maxStringLength) {
   return mergedArr;
 }
 
+// src/utils/tokenBudget.ts
+function computeTokenBudget(options) {
+  const {
+    promptMessages,
+    maxInputTokens,
+    maxOutputTokens,
+    adjustmentFactor = 20
+  } = options;
+  const promptTokens = promptMessages.reduce((total, msg) => {
+    const contentTokens = tokenCount(msg.content);
+    return total + contentTokens + 4;
+  }, 0);
+  const maxDiffTokens = maxInputTokens - adjustmentFactor - promptTokens - maxOutputTokens;
+  if (maxDiffTokens <= 0) {
+    return {
+      maxDiffTokens,
+      promptTokens,
+      isValid: false,
+      errorReason: `Token budget exhausted: prompt uses ${promptTokens} tokens, output reserves ${maxOutputTokens} tokens, but max input is only ${maxInputTokens}. Try reducing OCO_TOKENS_MAX_OUTPUT or using a model with higher context limits.`
+    };
+  }
+  return {
+    maxDiffTokens,
+    promptTokens,
+    isValid: true
+  };
+}
+var TokenBudgetError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "TokenBudgetError";
+  }
+};
+
+// src/utils/sliceToTokenLimit.ts
+function sliceToTokenLimit(text, maxTokens) {
+  if (maxTokens <= 0) {
+    return "";
+  }
+  const textTokens = tokenCount(text);
+  if (textTokens <= maxTokens) {
+    return text;
+  }
+  let low = 0;
+  let high = text.length;
+  let result = "";
+  while (low < high) {
+    const mid = Math.floor((low + high + 1) / 2);
+    const slice = text.substring(0, mid);
+    if (tokenCount(slice) <= maxTokens) {
+      result = slice;
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return result;
+}
+function splitToTokenChunks(text, maxTokens) {
+  if (maxTokens <= 0) {
+    throw new Error("maxTokens must be positive");
+  }
+  const chunks = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (tokenCount(remaining) <= maxTokens) {
+      chunks.push(remaining);
+      break;
+    }
+    const chunk = sliceToTokenLimit(remaining, maxTokens);
+    if (chunk.length === 0) {
+      chunks.push(remaining.substring(0, 1));
+      remaining = remaining.substring(1);
+    } else {
+      chunks.push(chunk);
+      remaining = remaining.substring(chunk.length);
+    }
+  }
+  return chunks;
+}
+
+// src/utils/validateCommitMessage.ts
+var VALID_TYPES = [
+  "feat",
+  "fix",
+  "refactor",
+  "perf",
+  "chore",
+  "deps",
+  "i18n",
+  "locale",
+  "translation",
+  "style",
+  "format",
+  "security",
+  "revert",
+  "build",
+  "compat",
+  "test",
+  "ci",
+  "docs",
+  "deprecated"
+];
+var HEADER_PATTERN = new RegExp(
+  `^(${VALID_TYPES.join("|")})(\\([^)]+\\))?:\\s*.+`,
+  "i"
+);
+var HEADER_LINE_PATTERN = new RegExp(
+  `^(${VALID_TYPES.join("|")})(\\([^)]+\\))?:\\s*.+`,
+  "gim"
+);
+function validateCommitMessage(message, options = {}) {
+  const { maxSubjectLength = 50, requireScope = false } = options;
+  const errors = [];
+  const lines = message.trim().split("\n");
+  if (lines.length === 0 || !lines[0].trim()) {
+    return {
+      isValid: false,
+      errors: ["Empty commit message"],
+      headerCount: 0
+    };
+  }
+  const firstLine = lines[0].trim();
+  if (!HEADER_PATTERN.test(firstLine)) {
+    errors.push(`First line is not a valid conventional commit header: "${firstLine}"`);
+  }
+  const colonIndex = firstLine.indexOf(":");
+  if (colonIndex > -1) {
+    const subject = firstLine.substring(colonIndex + 1).trim();
+    if (subject.length > maxSubjectLength) {
+      errors.push(`Subject line exceeds ${maxSubjectLength} characters (${subject.length})`);
+    }
+  }
+  if (requireScope && !firstLine.includes("(")) {
+    errors.push("Scope is required but not present");
+  }
+  const allHeaders = message.match(HEADER_LINE_PATTERN) || [];
+  const additionalHeaders = allHeaders.slice(1);
+  if (additionalHeaders.length > 0) {
+    errors.push(
+      `Multiple commit headers detected. Only one header is allowed. Additional headers found: ${additionalHeaders.join(", ")}`
+    );
+  }
+  return {
+    isValid: errors.length === 0,
+    errors,
+    headerCount: allHeaders.length,
+    firstHeader: allHeaders[0],
+    additionalHeaders
+  };
+}
+async function repairCommitMessage(invalidMessage) {
+  const engine = getEngine();
+  const repairPrompt = [
+    {
+      role: "system",
+      content: `You are a commit message formatter. The following commit message is invalid because it contains multiple headers or doesn't follow conventional commit format.
+
+Rewrite it as EXACTLY ONE valid conventional commit message.
+
+Rules:
+- Use format: type(scope): subject
+- Pick the most significant type if multiple changes exist
+- Keep subject under 50 characters
+- Mention other changes in the body if needed
+- Types: feat, fix, refactor, perf, chore, docs, test, ci, build, style, revert
+
+Output ONLY the rewritten commit message, nothing else.`
+    },
+    {
+      role: "user",
+      content: invalidMessage
+    }
+  ];
+  try {
+    const repaired = await engine.generateCommitMessage(repairPrompt);
+    if (repaired) {
+      const validation = validateCommitMessage(repaired);
+      if (validation.isValid) {
+        return repaired;
+      }
+    }
+  } catch {
+  }
+  return null;
+}
+function collapseMultipleHeaders(message, validation) {
+  if (!validation.firstHeader) {
+    const firstLine = message.trim().split("\n")[0];
+    return `chore: ${firstLine.substring(0, 50)}`;
+  }
+  if (!validation.additionalHeaders || validation.additionalHeaders.length === 0) {
+    return message;
+  }
+  const lines = message.split("\n");
+  const bodyLines = [];
+  let inBody = false;
+  for (const line of lines.slice(1)) {
+    const isHeader = HEADER_PATTERN.test(line.trim());
+    if (isHeader) {
+      bodyLines.push(`- ${line.trim()}`);
+    } else {
+      inBody = true;
+      bodyLines.push(line);
+    }
+  }
+  const body = bodyLines.join("\n").trim();
+  if (body) {
+    return `${validation.firstHeader}
+
+${body}`;
+  }
+  return validation.firstHeader;
+}
+async function ensureValidCommitMessage(message, options = {}) {
+  const validation = validateCommitMessage(message, options);
+  if (validation.isValid) {
+    return message;
+  }
+  if (validation.headerCount > 1) {
+    const repaired = await repairCommitMessage(message);
+    if (repaired) {
+      return repaired;
+    }
+    return collapseMultipleHeaders(message, validation);
+  }
+  return message;
+}
+
 // src/generateCommitMessageFromGitDiff.ts
 var config5 = getConfig();
 var MAX_TOKENS_INPUT = config5.OCO_TOKENS_MAX_INPUT;
@@ -87952,8 +88181,12 @@ var GenerateCommitMessageErrorEnum = ((GenerateCommitMessageErrorEnum2) => {
   return GenerateCommitMessageErrorEnum2;
 })(GenerateCommitMessageErrorEnum || {});
 var ADJUSTMENT_FACTOR = 20;
-var DIFF_SEPARATOR = "diff --git ";
-var RATE_LIMIT_DELAY_MS = 1e3;
+var DIFF_FILE_PATTERN = /^diff --git /m;
+var HUNK_PATTERN = /^@@ /m;
+var MAX_CONCURRENCY = 2;
+var INITIAL_BACKOFF_MS = 500;
+var MAX_BACKOFF_MS = 1e4;
+var MAX_REDUCTION_DEPTH = 5;
 var generateCommitMessageChatCompletionPrompt = async (diff, context2) => {
   const INIT_MESSAGES_PROMPT = await getMainCommitPrompt(context2);
   return [
@@ -87961,21 +88194,29 @@ var generateCommitMessageChatCompletionPrompt = async (diff, context2) => {
     { role: "user", content: diff }
   ];
 };
-function delay3(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function exponentialBackoff(attempt) {
+  const baseDelay = Math.min(INITIAL_BACKOFF_MS * Math.pow(2, attempt), MAX_BACKOFF_MS);
+  const jitter = Math.random() * baseDelay * 0.5;
+  const delay3 = baseDelay + jitter;
+  return new Promise((resolve) => setTimeout(resolve, delay3));
 }
 function splitDiffByLines(diff, maxTokens) {
-  const lines = diff.split("\n");
-  const chunks = [];
-  let currentChunk = "";
   if (maxTokens <= 0) {
     throw new Error(GenerateCommitMessageErrorEnum.outputTokensTooHigh);
   }
-  for (let line of lines) {
-    while (tokenCount(line) > maxTokens) {
-      const subLine = line.substring(0, maxTokens);
-      line = line.substring(maxTokens);
-      chunks.push(subLine);
+  const lines = diff.split("\n");
+  const chunks = [];
+  let currentChunk = "";
+  for (const line of lines) {
+    const lineTokens = tokenCount(line);
+    if (lineTokens > maxTokens) {
+      if (currentChunk) {
+        chunks.push(currentChunk);
+        currentChunk = "";
+      }
+      const lineChunks = splitToTokenChunks(line, maxTokens);
+      chunks.push(...lineChunks);
+      continue;
     }
     const potentialChunk = currentChunk + (currentChunk ? "\n" : "") + line;
     if (tokenCount(potentialChunk) > maxTokens) {
@@ -87989,13 +88230,13 @@ function splitDiffByLines(diff, maxTokens) {
   return chunks;
 }
 function splitDiffByFiles(diff, maxTokens) {
-  const fileDiffs = diff.split(DIFF_SEPARATOR).slice(1);
+  const parts = diff.split(DIFF_FILE_PATTERN);
+  const fileDiffs = parts.slice(1).map((part) => "diff --git " + part);
   const chunks = [];
   let currentChunk = { content: "", files: [], tokenCount: 0 };
   for (const fileDiff of fileDiffs) {
-    const fullFileDiff = DIFF_SEPARATOR + fileDiff;
-    const fileTokens = tokenCount(fullFileDiff);
-    const fileName = extractFileName(fileDiff);
+    const fileTokens = tokenCount(fileDiff);
+    const fileName = extractFileName(fileDiff.substring("diff --git ".length));
     if (currentChunk.tokenCount + fileTokens > maxTokens && currentChunk.content) {
       chunks.push(currentChunk);
       currentChunk = { content: "", files: [], tokenCount: 0 };
@@ -88008,13 +88249,13 @@ function splitDiffByFiles(diff, maxTokens) {
       const subChunks = splitLargeFileDiff(fileDiff, maxTokens);
       for (const subContent of subChunks) {
         chunks.push({
-          content: DIFF_SEPARATOR + subContent,
+          content: subContent,
           files: [fileName],
-          tokenCount: tokenCount(DIFF_SEPARATOR + subContent)
+          tokenCount: tokenCount(subContent)
         });
       }
     } else {
-      currentChunk.content += fullFileDiff;
+      currentChunk.content += fileDiff;
       currentChunk.files.push(fileName);
       currentChunk.tokenCount += fileTokens;
     }
@@ -88025,13 +88266,20 @@ function splitDiffByFiles(diff, maxTokens) {
   return chunks;
 }
 function splitLargeFileDiff(fileDiff, maxTokens) {
-  const hunkSeparator = "@@ ";
-  const [fileHeader, ...hunks] = fileDiff.split(hunkSeparator);
-  const mergedHunks = mergeDiffs(
-    hunks.map((hunk) => hunkSeparator + hunk),
-    maxTokens - tokenCount(fileHeader)
-    // Reserve space for header
-  );
+  const hunkMatch = fileDiff.match(HUNK_PATTERN);
+  if (!hunkMatch || hunkMatch.index === void 0) {
+    return splitDiffByLines(fileDiff, maxTokens);
+  }
+  const fileHeader = fileDiff.substring(0, hunkMatch.index);
+  const hunksContent = fileDiff.substring(hunkMatch.index);
+  const headerTokens = tokenCount(fileHeader);
+  if (headerTokens >= maxTokens) {
+    return splitDiffByLines(fileDiff, maxTokens);
+  }
+  const hunkParts = hunksContent.split(HUNK_PATTERN);
+  const hunks = hunkParts.slice(1).map((part) => "@@ " + part);
+  const maxHunkTokens = maxTokens - headerTokens;
+  const mergedHunks = mergeDiffs(hunks, maxHunkTokens);
   const result = [];
   for (const hunk of mergedHunks) {
     const fullDiff = fileHeader + hunk;
@@ -88044,30 +88292,64 @@ function splitLargeFileDiff(fileDiff, maxTokens) {
   }
   return result;
 }
-async function getDiffSummaries(chunks) {
-  const engine = getEngine();
-  const summaries = [];
-  for (const chunk of chunks) {
-    const messages = [
-      SUMMARY_PROMPT,
-      { role: "user", content: chunk.content }
-    ];
-    try {
-      const summary = await engine.generateCommitMessage(messages);
-      summaries.push({
-        summary: summary || `Changes in: ${chunk.files.join(", ")}`,
-        files: chunk.files
+async function runWithConcurrency(items, fn, concurrency) {
+  const queue = items.map((item, index) => ({ item, index }));
+  const running = [];
+  while (queue.length > 0 || running.length > 0) {
+    while (running.length < concurrency && queue.length > 0) {
+      const { item, index } = queue.shift();
+      const promise = fn(item, index).finally(() => {
+        const idx = running.indexOf(promise);
+        if (idx > -1) running.splice(idx, 1);
       });
-    } catch (error) {
-      summaries.push({
-        summary: `Changes in: ${chunk.files.join(", ")}`,
-        files: chunk.files
-      });
+      running.push(promise);
     }
-    if (chunks.indexOf(chunk) < chunks.length - 1) {
-      await delay3(RATE_LIMIT_DELAY_MS);
+    if (running.length > 0) {
+      await Promise.race(running);
     }
   }
+}
+async function getDiffSummaries(chunks) {
+  const engine = getEngine();
+  const summaries = new Array(chunks.length);
+  let lastAttemptTime = 0;
+  await runWithConcurrency(
+    chunks,
+    async (chunk, index) => {
+      const messages = [
+        SUMMARY_PROMPT,
+        { role: "user", content: chunk.content }
+      ];
+      const now = Date.now();
+      const timeSinceLastRequest = now - lastAttemptTime;
+      if (timeSinceLastRequest < INITIAL_BACKOFF_MS) {
+        await exponentialBackoff(0);
+      }
+      lastAttemptTime = Date.now();
+      let attempts = 0;
+      const maxAttempts = 3;
+      while (attempts < maxAttempts) {
+        try {
+          const summary = await engine.generateCommitMessage(messages);
+          summaries[index] = {
+            summary: summary || `Changes in: ${chunk.files.join(", ")}`,
+            files: chunk.files
+          };
+          return;
+        } catch (error) {
+          attempts++;
+          if (attempts < maxAttempts) {
+            await exponentialBackoff(attempts);
+          }
+        }
+      }
+      summaries[index] = {
+        summary: `Changes in: ${chunk.files.join(", ")}`,
+        files: chunk.files
+      };
+    },
+    MAX_CONCURRENCY
+  );
   return summaries;
 }
 async function synthesizeCommitMessage(summaries, context2) {
@@ -88083,7 +88365,7 @@ async function synthesizeCommitMessage(summaries, context2) {
   const maxSummaryTokens = MAX_TOKENS_INPUT - promptTokens - MAX_TOKENS_OUTPUT - ADJUSTMENT_FACTOR;
   let finalSummary = combinedSummary;
   if (tokenCount(combinedSummary) > maxSummaryTokens) {
-    finalSummary = await recursivelyReduceSummaries(summaries, maxSummaryTokens);
+    finalSummary = await recursivelyReduceSummaries(summaries, maxSummaryTokens, 0);
   }
   const messages = [
     synthesisPrompt,
@@ -88098,9 +88380,13 @@ ${finalSummary}`
   if (!commitMessage) {
     throw new Error("EMPTY_MESSAGE" /* emptyMessage */);
   }
-  return commitMessage;
+  return await ensureValidCommitMessage(commitMessage);
 }
-async function recursivelyReduceSummaries(summaries, maxTokens) {
+async function recursivelyReduceSummaries(summaries, maxTokens, depth) {
+  if (depth >= MAX_REDUCTION_DEPTH) {
+    const combined = summaries.map((s2) => s2.summary).join("\n");
+    return sliceToTokenLimit(combined, maxTokens);
+  }
   const engine = getEngine();
   const batches = [];
   let currentBatch = [];
@@ -88119,10 +88405,12 @@ async function recursivelyReduceSummaries(summaries, maxTokens) {
     batches.push(currentBatch);
   }
   if (batches.length <= 1) {
-    return summaries.map((s2) => s2.summary).join("\n").substring(0, maxTokens * 3);
+    const combined = summaries.map((s2) => s2.summary).join("\n");
+    return sliceToTokenLimit(combined, maxTokens);
   }
   const reducedSummaries = [];
-  for (const batch of batches) {
+  for (let i3 = 0; i3 < batches.length; i3++) {
+    const batch = batches[i3];
     const batchText = batch.map((s2) => s2.summary).join("\n");
     const allFiles = batch.flatMap((s2) => s2.files);
     const messages = [
@@ -88131,44 +88419,53 @@ async function recursivelyReduceSummaries(summaries, maxTokens) {
 
 ${batchText}` }
     ];
-    try {
-      const reduced = await engine.generateCommitMessage(messages);
-      reducedSummaries.push({
-        summary: reduced || batchText.substring(0, 500),
-        files: allFiles
-      });
-    } catch {
-      reducedSummaries.push({
-        summary: batchText.substring(0, 500),
-        files: allFiles
-      });
+    let reduced = null;
+    let attempts = 0;
+    while (attempts < 3 && !reduced) {
+      try {
+        reduced = await engine.generateCommitMessage(messages);
+      } catch {
+        attempts++;
+        if (attempts < 3) await exponentialBackoff(attempts);
+      }
     }
-    await delay3(RATE_LIMIT_DELAY_MS);
+    reducedSummaries.push({
+      summary: reduced || sliceToTokenLimit(batchText, 500),
+      files: allFiles
+    });
+    if (i3 < batches.length - 1) {
+      await exponentialBackoff(0);
+    }
   }
   const combinedReduced = reducedSummaries.map((s2) => s2.summary).join("\n\n");
   if (tokenCount(combinedReduced) > maxTokens) {
-    return recursivelyReduceSummaries(reducedSummaries, maxTokens);
+    return recursivelyReduceSummaries(reducedSummaries, maxTokens, depth + 1);
   }
   return combinedReduced;
 }
 var generateCommitMessageByDiff = async (diff, context2 = "") => {
   try {
     const INIT_MESSAGES_PROMPT = await getMainCommitPrompt(context2);
-    const INIT_MESSAGES_PROMPT_LENGTH = INIT_MESSAGES_PROMPT.map(
-      (msg) => tokenCount(msg.content) + 4
-    ).reduce((a3, b3) => a3 + b3, 0);
-    const MAX_DIFF_TOKENS = MAX_TOKENS_INPUT - ADJUSTMENT_FACTOR - INIT_MESSAGES_PROMPT_LENGTH - MAX_TOKENS_OUTPUT;
+    const budget = computeTokenBudget({
+      promptMessages: INIT_MESSAGES_PROMPT,
+      maxInputTokens: MAX_TOKENS_INPUT,
+      maxOutputTokens: MAX_TOKENS_OUTPUT,
+      adjustmentFactor: ADJUSTMENT_FACTOR
+    });
+    if (!budget.isValid) {
+      throw new TokenBudgetError(budget.errorReason);
+    }
     const diffTokens = tokenCount(diff);
-    if (diffTokens <= MAX_DIFF_TOKENS) {
+    if (diffTokens <= budget.maxDiffTokens) {
       const messages = await generateCommitMessageChatCompletionPrompt(diff, context2);
       const engine = getEngine();
       const commitMessage = await engine.generateCommitMessage(messages);
       if (!commitMessage) {
         throw new Error("EMPTY_MESSAGE" /* emptyMessage */);
       }
-      return commitMessage;
+      return await ensureValidCommitMessage(commitMessage);
     }
-    const chunks = splitDiffByFiles(diff, MAX_DIFF_TOKENS);
+    const chunks = splitDiffByFiles(diff, budget.maxDiffTokens);
     const summaries = await getDiffSummaries(chunks);
     return await synthesizeCommitMessage(summaries, context2);
   } catch (error) {
