@@ -372,33 +372,32 @@ const IDENTITY = "You are to act as an author of a commit message in git.";
 */
 const SINGLE_MESSAGE_CONSTRAINT = `
 ## Critical Output Rules:
-- You MUST generate exactly ONE commit message
-- NEVER output multiple commit headers (e.g., "feat: X\\n\\nfix: Y" is INVALID)
+- You MUST generate exactly ONE single-line commit message
+- Output ONLY the commit header line, nothing else
+- NO bullet points, NO body text, NO descriptions
+- NO line breaks in your output
 - If multiple things changed, pick the most significant type
-- Use the commit body to mention secondary changes if needed
-- When in doubt, prefer: feat > fix > refactor > chore`;
+- When in doubt, prefer: feat > fix > refactor > chore
+- Example valid output: "feat(auth): add user login endpoint"
+- Example INVALID output: "feat(auth): add user login\n- added validation\n- added tests"`;
 /**
 * SUMMARY_PROMPT for Map phase - analyzes diff chunks and extracts key changes.
 * Used when diffs are too large and need to be processed in chunks.
 */
 const SUMMARY_PROMPT = {
 	role: "system",
-	content: `You are a code analyst. Analyze the following git diff and extract the key technical changes.
+	content: `You are a code analyst. Analyze the following git diff and extract the primary change.
 
 ## Instructions:
-- Return a concise bulleted list of changes (3-5 items max)
-- Focus on WHAT changed, not WHY
-- Include file names where relevant
+- Return a SINGLE sentence describing the main change
+- Focus on WHAT changed at a high level
+- Do NOT return bulleted lists
 - Do NOT write a commit message or commit header
 - Do NOT use prefixes like "feat:", "fix:", etc.
-- Be technical and specific
-- Keep each bullet point to one line
+- Be concise - one sentence only
 
 ## Example Output:
-- Added user authentication middleware in \`auth.ts\`
-- Updated API endpoint path from /v1 to /v2 in \`routes.ts\`
-- Fixed null pointer exception in error handler
-- Removed deprecated logging utility`
+Added user authentication middleware with JWT validation`
 };
 /**
 * INTENT_EXTRACTION_PROMPT for extracting high-level themes from file summaries.
@@ -534,8 +533,6 @@ type(scope): description
 - Multiple types in one commit: Choose the most significant change. If equal significance, prefer: feat > fix > refactor > chore
 - Multiple scopes affected: Use parent scope if logical grouping exists, omit scope if no clear parent`;
 const getCommitConvention = () => COMMIT_GUIDELINES;
-const getDescriptionInstruction = () => config$2.OCO_DESCRIPTION ? "Add a short description of WHY the changes are done after the commit message. Don't start it with \"This commit\", just describe the changes." : "Don't add any descriptions to the commit, only commit message.";
-const getOneLineCommitInstruction = () => config$2.OCO_ONE_LINE_COMMIT ? "Craft a concise, single sentence, commit message that encapsulates all changes made, with an emphasis on the primary updates. If the modifications share a common theme or scope, mention it succinctly; otherwise, leave the scope out to maintain focus. The goal is to provide a clear and unified overview of the changes in one single message." : "";
 const getScopeInstruction = () => config$2.OCO_OMIT_SCOPE ? "Do not include a scope in the commit message format. Use the format: <type>: <subject>" : "";
 const userInputCodeContext = (context) => {
 	if (context !== "" && context !== " ") return `Additional context provided by the user: <context>${context}</context>\nConsider this context when generating the commit message, incorporating relevant information when appropriate.`;
@@ -549,24 +546,23 @@ const getThemeSynthesisPrompt = (context) => ({
 	role: "system",
 	content: `${`${IDENTITY}
 
-You will receive HIGH-LEVEL THEMES extracted from a commit, each with a file count indicating scope.
-Your task is to write **exactly ONE** commit message that captures the primary intent.`}
-## Theme Selection Rules:
+You will receive HIGH-LEVEL THEMES extracted from a commit.
+Your task is to write **exactly ONE single-line** commit message. Output ONLY the header line, nothing else.`}
+## Rules:
 - Choose the theme affecting the MOST files as the primary focus
 - If themes have equal file counts, prefer: feature > fix > refactor > chore
-- Secondary themes may be mentioned in the commit body if appropriate
-- Do NOT reference individual files unless essential for clarity
+- Do NOT include bullet points or body text
+- Do NOT include line breaks
+- Output ONLY the single commit header line
 ${COMMIT_GUIDELINES}
 ${SINGLE_MESSAGE_CONSTRAINT}
-${getDescriptionInstruction()}
-${getOneLineCommitInstruction()}
 ${getScopeInstruction()}
-Use the present tense. Lines must not be longer than 74 characters. Use English for the commit message.
+Use the present tense. Output must be a single line under 74 characters. Use English.
 ${userInputCodeContext(context)}`
 });
 const INIT_MAIN_PROMPT = (context) => ({
 	role: "system",
-	content: `${`${IDENTITY} Your mission is to create clean and comprehensive commit messages following the Conventional Commit Convention and explain WHAT were the changes and mainly WHY the changes were done.`}\nI'll send you an output of 'git diff --staged' command, and you are to convert it into a commit message.\n${getCommitConvention()}\n${SINGLE_MESSAGE_CONSTRAINT}\n${getDescriptionInstruction()}\n${getOneLineCommitInstruction()}\n${getScopeInstruction()}\nUse the present tense. Lines must not be longer than 74 characters. Use English for the commit message.\n${userInputCodeContext(context)}`
+	content: `${`${IDENTITY} Your mission is to create a single-line commit message following the Conventional Commit Convention.`}\nI'll send you an output of 'git diff --staged' command, and you are to convert it into a single-line commit message. Output ONLY the commit header, nothing else.\n${getCommitConvention()}\n${SINGLE_MESSAGE_CONSTRAINT}\n${getScopeInstruction()}\nUse the present tense. Output must be a single line under 74 characters. Use English. NO bullet points, NO body text.\n${userInputCodeContext(context)}`
 });
 const INIT_DIFF_PROMPT = {
 	role: "user",
@@ -1336,15 +1332,26 @@ const gitAdd = async ({ files }) => {
 };
 const getDiff = async ({ files }) => {
 	const gitDir = await getGitDir();
-	const lockFiles = files.filter((file) => file.includes(".lock") || file.includes("-lock.") || file.includes(".svg") || file.includes(".png") || file.includes(".jpg") || file.includes(".jpeg") || file.includes(".webp") || file.includes(".gif"));
-	if (lockFiles.length) outro(`Some files are excluded by default from 'git diff'. No commit messages are generated for this files:\n${lockFiles.join("\n")}`);
+	const isIgnored = (file) => file.endsWith("package-lock.json") || file.endsWith("yarn.lock") || file.endsWith("pnpm-lock.yaml") || file.endsWith("bun.lock") || file.endsWith(".svg") || file.endsWith(".png") || file.endsWith(".jpg") || file.endsWith(".jpeg") || file.endsWith(".webp") || file.endsWith(".gif") || file.endsWith(".ico") || file.endsWith(".min.js") || file.endsWith(".min.css");
+	const ignoredFiles = files.filter(isIgnored);
+	const targetFiles = files.filter((f) => !isIgnored(f));
+	if (targetFiles.length === 0) {
+		if (ignoredFiles.length > 0) return `No code changes detected. The following binary/lock files were modified:\n${ignoredFiles.join("\n")}`;
+		return "";
+	}
 	const { stdout: diff } = await execa("git", [
 		"diff",
 		"--staged",
+		"--diff-filter=ACMR",
 		"--",
-		...files.filter((file) => !(file.includes(".lock") || file.includes("-lock.")))
+		...targetFiles
 	], { cwd: gitDir });
-	return diff;
+	let finalOutput = diff;
+	if (ignoredFiles.length > 0) {
+		finalOutput += `\n\n[NOTE] The following files were also modified but excluded from the diff to save space:\n${ignoredFiles.join("\n")}`;
+		outro(`Excluded ${ignoredFiles.length} binary/lock files from AI context.`);
+	}
+	return finalOutput;
 };
 const getGitDir = async () => {
 	const { stdout: gitDir } = await execa("git", ["rev-parse", "--show-toplevel"]);
@@ -1373,7 +1380,7 @@ const checkMessageTemplate = (extraArgs$1) => {
 	for (const arg of extraArgs$1) if (arg.includes(config.OCO_MESSAGE_TEMPLATE_PLACEHOLDER)) return arg;
 	return false;
 };
-const generateCommitMessageFromGitDiff = async ({ diff, extraArgs: extraArgs$1, context = "", skipCommitConfirmation = false }) => {
+const generateCommitMessageFromGitDiff = async ({ diff, extraArgs: extraArgs$1, context = "", skipCommitConfirmation = true }) => {
 	await assertGitRepo();
 	const commitGenerationSpinner = spinner();
 	commitGenerationSpinner.start("Generating the commit message");
@@ -1385,10 +1392,8 @@ const generateCommitMessageFromGitDiff = async ({ diff, extraArgs: extraArgs$1, 
 			extraArgs$1.splice(messageTemplateIndex, 1);
 			commitMessage = messageTemplate.replace(config.OCO_MESSAGE_TEMPLATE_PLACEHOLDER, commitMessage);
 		}
-		outro(`
-${chalk.grey("——————————————————")}
-${commitMessage}
-${chalk.grey("——————————————————")}`);
+		commitGenerationSpinner.message("Generated");
+		commitGenerationSpinner.stop(commitMessage);
 		const userAction = skipCommitConfirmation ? "Yes" : await select({
 			message: "Confirm the commit message?",
 			options: [
@@ -1426,19 +1431,17 @@ ${chalk.grey("——————————————————")}`);
 		if (userAction === "Yes" || userAction === "Edit") {
 			const committingChangesSpinner = spinner();
 			committingChangesSpinner.start("Committing the changes");
-			const { stdout } = await execa("git", [
+			await execa("git", [
 				"commit",
 				"-m",
 				commitMessage,
 				...extraArgs$1
 			]);
-			committingChangesSpinner.stop(`${chalk.green("✔")} Successfully committed`);
-			outro(stdout);
+			committingChangesSpinner.stop("Successfully committed");
 			const remotes = await getGitRemotes();
 			if (config.OCO_GITPUSH === false) return;
 			if (!remotes.length) {
-				const { stdout: stdout$1 } = await execa("git", ["push"]);
-				if (stdout$1) outro(stdout$1);
+				await execa("git", ["push"]);
 				process.exit(0);
 			}
 			if (remotes.length === 1) {
@@ -1447,13 +1450,13 @@ ${chalk.grey("——————————————————")}`);
 				if (isPushConfirmedByUser) {
 					const pushSpinner = spinner();
 					pushSpinner.start(`Running 'git push ${remotes[0]}'`);
-					const { stdout: stdout$1 } = await execa("git", [
+					const { stdout } = await execa("git", [
 						"push",
 						"--verbose",
 						remotes[0]
 					]);
-					pushSpinner.stop(`${chalk.green("✔")} Successfully pushed all commits to ${remotes[0]}`);
-					if (stdout$1) outro(stdout$1);
+					pushSpinner.stop(`Successfully pushed all commits to ${remotes[0]}`);
+					if (stdout) outro(stdout);
 				} else {
 					outro("`git push` aborted");
 					process.exit(0);
@@ -1471,9 +1474,9 @@ ${chalk.grey("——————————————————")}`);
 				if (selectedRemote !== skipOption) {
 					const pushSpinner = spinner();
 					pushSpinner.start(`Running 'git push ${selectedRemote}'`);
-					const { stdout: stdout$1 } = await execa("git", ["push", selectedRemote]);
-					if (stdout$1) outro(stdout$1);
-					pushSpinner.stop(`${chalk.green("✔")} successfully pushed all commits to ${selectedRemote}`);
+					const { stdout } = await execa("git", ["push", selectedRemote]);
+					if (stdout) outro(stdout);
+					pushSpinner.stop(`Successfully pushed all commits to ${selectedRemote}`);
 				}
 			}
 		} else {
@@ -1485,14 +1488,14 @@ ${chalk.grey("——————————————————")}`);
 			});
 		}
 	} catch (error) {
-		commitGenerationSpinner.stop(`${chalk.red("✖")} Failed to generate the commit message`);
+		commitGenerationSpinner.stop("Failed to generate the commit message");
 		console.log(error);
 		const err = error;
 		outro(`${chalk.red("✖")} ${err?.message || err}`);
 		process.exit(1);
 	}
 };
-async function commit(extraArgs$1 = [], context = "", isStageAllFlag = false, skipCommitConfirmation = true) {
+async function commit(extraArgs$1 = [], context = "", isStageAllFlag = false, skipCommitConfirmation = false) {
 	if (isStageAllFlag) {
 		const changedFiles$1 = await getChangedFiles();
 		if (changedFiles$1) await gitAdd({ files: changedFiles$1 });
@@ -1509,7 +1512,7 @@ async function commit(extraArgs$1 = [], context = "", isStageAllFlag = false, sk
 	}
 	intro("open-commit");
 	if (errorChangedFiles ?? errorStagedFiles) {
-		outro(`${chalk.red("✖")} ${errorChangedFiles ?? errorStagedFiles}`);
+		outro(`${errorChangedFiles ?? errorStagedFiles}`);
 		process.exit(1);
 	}
 	const stagedFilesSpinner = spinner();
@@ -1536,7 +1539,7 @@ async function commit(extraArgs$1 = [], context = "", isStageAllFlag = false, sk
 		await commit(extraArgs$1, context, false);
 		process.exit(0);
 	}
-	stagedFilesSpinner.stop(`${stagedFiles.length} staged files:\n${stagedFiles.map((file) => `  ${file}`).join("\n")}`);
+	stagedFilesSpinner.stop(`${stagedFiles.length} staged files:\n ${stagedFiles.map((file) => `  ${file}`).join("\n ")}`);
 	const [, generateCommitError] = await trytm(generateCommitMessageFromGitDiff({
 		diff: await getDiff({ files: stagedFiles }),
 		extraArgs: extraArgs$1,
@@ -1544,41 +1547,11 @@ async function commit(extraArgs$1 = [], context = "", isStageAllFlag = false, sk
 		skipCommitConfirmation
 	}));
 	if (generateCommitError) {
-		outro(`${chalk.red("✖")} ${generateCommitError}`);
+		outro(`${generateCommitError}`);
 		process.exit(1);
 	}
 	process.exit(0);
 }
-
-//#endregion
-//#region src/version.ts
-const getOpenCommitLatestVersion = async () => {
-	try {
-		const { stdout } = await execa("npm", [
-			"view",
-			"opencommit",
-			"version"
-		]);
-		return stdout;
-	} catch (_) {
-		outro("Error while getting the latest version of opencommit");
-		return;
-	}
-};
-
-//#endregion
-//#region src/utils/check-is-latest-version.ts
-const checkIsLatestVersion = async () => {
-	const latestVersion = await getOpenCommitLatestVersion();
-	if (latestVersion) {
-		const currentVersion = version;
-		if (currentVersion !== latestVersion) outro(chalk.yellow(`
-You are not using the latest stable version of OpenCommit with new features and bug fixes.
-Current version: ${currentVersion}. Latest version: ${latestVersion}.
-🚀 To update run: npm i - g opencommit @latest.
-        `));
-	}
-};
 
 //#endregion
 //#region src/cli.ts
@@ -1588,11 +1561,6 @@ cli({
 	name: "opencommit",
 	commands: [configCommand],
 	flags: {
-		fgm: {
-			type: Boolean,
-			description: "Use full GitMoji specification",
-			default: false
-		},
 		context: {
 			type: String,
 			alias: "c",
@@ -1609,7 +1577,6 @@ cli({
 	ignoreArgv: (type) => type === "unknown-flag" || type === "argument",
 	help: { description }
 }, async ({ flags }) => {
-	await checkIsLatestVersion();
 	commit(extraArgs, flags.context, false, flags.yes);
 }, extraArgs);
 
