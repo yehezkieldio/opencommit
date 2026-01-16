@@ -1,21 +1,17 @@
 import type { OpenAI } from "openai";
-import { DEFAULT_TOKEN_LIMITS, getConfig } from "./commands/config.js";
-import { getMainCommitPrompt, getThemeSynthesisPrompt, INTENT_EXTRACTION_PROMPT, SUMMARY_PROMPT } from "./prompts.js";
-import { getEngine } from "./utils/engine.js";
-import { extractFileName } from "./utils/extract-file-name.js";
-import { mergeDiffs } from "./utils/merge-diffs.js";
-import { splitToTokenChunks } from "./utils/slice-to-token-limit.js";
-import { computeTokenBudget, TokenBudgetError } from "./utils/token-budget.js";
-import { tokenCount } from "./utils/token-count.js";
-import { ensureValidCommitMessage } from "./utils/validate-commit-message.js";
+import { DEFAULT_TOKEN_LIMITS, getConfig } from "#/commands/config";
+import { getMainCommitPrompt, getThemeSynthesisPrompt, INTENT_EXTRACTION_PROMPT, SUMMARY_PROMPT } from "#/prompts";
+import { getEngine } from "#/utils/engine";
+import { extractFileName } from "#/utils/extract-file-name";
+import { mergeDiffs } from "#/utils/merge-diffs";
+import { splitToTokenChunks } from "#/utils/slice-to-token-limit";
+import { computeTokenBudget, TokenBudgetError } from "#/utils/token-budget";
+import { tokenCount } from "#/utils/token-count";
+import { ensureValidCommitMessage } from "#/utils/validate-commit-message.js";
 
 const config = getConfig();
 const MAX_TOKENS_INPUT = config.OCO_TOKENS_MAX_INPUT;
 const MAX_TOKENS_OUTPUT = config.OCO_TOKENS_MAX_OUTPUT;
-
-// ============================================================================
-// Types
-// ============================================================================
 
 /**
  * Represents a chunk of the diff that can be processed independently.
@@ -44,10 +40,6 @@ interface Theme {
     scope: "architectural" | "feature" | "fix" | "refactor" | "chore";
 }
 
-// ============================================================================
-// Error Enums
-// ============================================================================
-
 export const GenerateCommitMessageErrorEnum = {
     tooMuchTokens: "TOO_MUCH_TOKENS",
     internalError: "INTERNAL_ERROR",
@@ -56,10 +48,6 @@ export const GenerateCommitMessageErrorEnum = {
 } as const;
 export type GenerateCommitMessageErrorEnum =
     (typeof GenerateCommitMessageErrorEnum)[keyof typeof GenerateCommitMessageErrorEnum];
-
-// ============================================================================
-// Constants
-// ============================================================================
 
 const ADJUSTMENT_FACTOR = 20;
 /** Regex pattern for splitting diffs by file - anchored to line start */
@@ -72,10 +60,6 @@ const MAX_CONCURRENCY = 2;
 const INITIAL_BACKOFF_MS = 500;
 /** Maximum delay for exponential backoff (ms) */
 const MAX_BACKOFF_MS = 10_000;
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
 
 /**
  * Creates the chat completion prompt for direct commit message generation.
@@ -142,10 +126,6 @@ function splitDiffByLines(diff: string, maxTokens: number): string[] {
     if (currentChunk) chunks.push(currentChunk);
     return chunks;
 }
-
-// ============================================================================
-// Map Phase: Splitting and Summarizing
-// ============================================================================
 
 /**
  * Splits a diff into chunks by file boundaries using regex anchors.
@@ -337,10 +317,6 @@ async function getDiffSummaries(chunks: DiffChunk[]): Promise<ChunkSummary[]> {
 
 const JSON_MATCH_REGEX = /```(?:json)?\s*([\s\S]*?)```/;
 
-// ============================================================================
-// Intent Extraction Phase: Extracting High-Level Themes
-// ============================================================================
-
 /**
  * INTENT EXTRACTION PHASE: Extracts high-level themes from file summaries.
  * This bridges the gap between file-specific Map phase output and synthesis.
@@ -417,10 +393,6 @@ async function extractThemes(summaries: ChunkSummary[]): Promise<Theme[]> {
     ];
 }
 
-// ============================================================================
-// Reduce Phase: Synthesizing Final Message from Themes
-// ============================================================================
-
 /**
  * REDUCE PHASE: Combines extracted themes into a single commit message.
  * Now operates on high-level themes instead of raw file summaries.
@@ -462,10 +434,6 @@ async function synthesizeCommitMessage(summaries: ChunkSummary[], context: strin
     return await ensureValidCommitMessage(commitMessage);
 }
 
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
 /**
  * Main entry point for generating a commit message from a git diff.
  *
@@ -479,7 +447,6 @@ async function synthesizeCommitMessage(summaries: ChunkSummary[], context: strin
 export const generateCommitMessageByDiff = async (diff: string, context = ""): Promise<string> => {
     const INIT_MESSAGES_PROMPT = await getMainCommitPrompt(context);
 
-    // Use centralized token budget computation
     const budget = computeTokenBudget({
         promptMessages: INIT_MESSAGES_PROMPT,
         maxInputTokens: MAX_TOKENS_INPUT,
@@ -496,6 +463,7 @@ export const generateCommitMessageByDiff = async (diff: string, context = ""): P
     // ========================================================================
     // Small Diff Path: Direct Generation
     // ========================================================================
+
     if (diffTokens <= budget.maxDiffTokens) {
         const messages = await generateCommitMessageChatCompletionPrompt(diff, context);
         const engine = getEngine();

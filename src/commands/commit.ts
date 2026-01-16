@@ -1,10 +1,10 @@
 import { confirm, intro, isCancel, multiselect, outro, select, spinner, text } from "@clack/prompts";
 import chalk from "chalk";
 import { execa } from "execa";
-import { generateCommitMessageByDiff } from "../generate-commit-message-from-git-diff.js";
-import { assertGitRepo, getChangedFiles, getDiff, getStagedFiles, gitAdd } from "../utils/git.js";
-import { trytm } from "../utils/trytm.js";
-import { getConfig } from "./config.js";
+import { getConfig } from "#/commands/config";
+import { generateCommitMessageByDiff } from "#/generate-commit-message-from-git-diff";
+import { assertGitRepo, getChangedFiles, getDiff, getStagedFiles, gitAdd } from "#/utils/git";
+import { trytm } from "#/utils/trytm";
 
 const config = getConfig();
 

@@ -2,10 +2,10 @@ import { outro } from "@clack/prompts";
 import axios from "axios";
 import chalk from "chalk";
 import { AzureOpenAI, type OpenAI } from "openai";
-import { GenerateCommitMessageErrorEnum } from "../generate-commit-message-from-git-diff.js";
-import { removeContentTags } from "../utils/remove-content-tags.js";
-import { tokenCount } from "./../utils/token-count.js";
-import type { AiEngine, AiEngineConfig } from "./engine.js";
+import type { AiEngine, AiEngineConfig } from "#/engine/engine";
+import { GenerateCommitMessageErrorEnum } from "#/generate-commit-message-from-git-diff";
+import { removeContentTags } from "#/utils/remove-content-tags";
+import { tokenCount } from "#/utils/token-count";
 
 interface AzureAiEngineConfig extends AiEngineConfig {
     baseURL: string;

@@ -5,7 +5,6 @@ import { cli } from "cleye";
 import packageJSON from "../package.json" with { type: "json" };
 import { commit } from "./commands/commit";
 import { configCommand } from "./commands/config";
-import { checkIsLatestVersion } from "./utils/check-is-latest-version";
 
 const extraArgs = process.argv.slice(2);
 
@@ -15,11 +14,6 @@ cli(
         name: "opencommit",
         commands: [configCommand],
         flags: {
-            fgm: {
-                type: Boolean,
-                description: "Use full GitMoji specification",
-                default: false,
-            },
             context: {
                 type: String,
                 alias: "c",
@@ -37,9 +31,6 @@ cli(
         help: { description: packageJSON.description },
     },
     async ({ flags }) => {
-        await checkIsLatestVersion();
-
-        // Removed hooks and migrations logic
         commit(extraArgs, flags.context, false, flags.yes);
     },
     extraArgs

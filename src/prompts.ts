@@ -1,5 +1,5 @@
 import type { OpenAI } from "openai";
-import { getConfig } from "./commands/config.js";
+import { getConfig } from "#/commands/config";
 
 const config = getConfig();
 

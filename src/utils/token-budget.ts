@@ -1,5 +1,5 @@
 import type { OpenAI } from "openai";
-import { tokenCount } from "./token-count.js";
+import { tokenCount } from "#/utils/token-count";
 
 /**
  * Result of token budget computation.

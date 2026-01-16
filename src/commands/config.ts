@@ -5,7 +5,7 @@ import { intro, outro } from "@clack/prompts";
 import chalk from "chalk";
 import { command } from "cleye";
 import { parse as iniParse, stringify as iniStringify } from "ini";
-import { COMMANDS } from "./enum.js";
+import { COMMANDS } from "#/commands/enum";
 
 export const CONFIG_KEYS = {
     OCO_API_KEY: "OCO_API_KEY",

@@ -1,4 +1,4 @@
-import { tokenCount } from "./token-count.js";
+import { tokenCount } from "#/utils/token-count";
 
 /**
  * Slices a string to fit within a token limit using binary search.

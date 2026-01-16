@@ -1,6 +1,5 @@
 import type { OpenAI } from "openai";
-
-import { getEngine } from "./engine.js";
+import { getEngine } from "#/utils/engine";
 
 /**
  * Valid conventional commit types in priority order.

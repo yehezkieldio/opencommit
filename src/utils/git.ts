@@ -12,10 +12,6 @@ export const assertGitRepo = async () => {
     }
 };
 
-// const excludeBigFilesFromDiff = ['*-lock.*', '*.lock'].map(
-//   (file) => `:(exclude)${file}`
-// );
-
 export const getOpenCommitIgnore = async (): Promise<Ignore> => {
     const gitDir = await getGitDir();
 
@@ -85,31 +81,42 @@ export const gitAdd = async ({ files }: { files: string[] }) => {
 export const getDiff = async ({ files }: { files: string[] }) => {
     const gitDir = await getGitDir();
 
-    const lockFiles = files.filter(
-        (file) =>
-            file.includes(".lock") ||
-            file.includes("-lock.") ||
-            file.includes(".svg") ||
-            file.includes(".png") ||
-            file.includes(".jpg") ||
-            file.includes(".jpeg") ||
-            file.includes(".webp") ||
-            file.includes(".gif")
-    );
+    const isIgnored = (file: string) =>
+        file.endsWith("package-lock.json") ||
+        file.endsWith("yarn.lock") ||
+        file.endsWith("pnpm-lock.yaml") ||
+        file.endsWith("bun.lock") ||
+        file.endsWith(".svg") ||
+        file.endsWith(".png") ||
+        file.endsWith(".jpg") ||
+        file.endsWith(".jpeg") ||
+        file.endsWith(".webp") ||
+        file.endsWith(".gif") ||
+        file.endsWith(".ico") ||
+        file.endsWith(".min.js") ||
+        file.endsWith(".min.css");
 
-    if (lockFiles.length) {
-        outro(
-            `Some files are excluded by default from 'git diff'. No commit messages are generated for this files:\n${lockFiles.join(
-                "\n"
-            )}`
-        );
+    const ignoredFiles = files.filter(isIgnored);
+    const targetFiles = files.filter((f) => !isIgnored(f));
+
+    if (targetFiles.length === 0) {
+        if (ignoredFiles.length > 0) {
+            return `No code changes detected. The following binary/lock files were modified:\n${ignoredFiles.join("\n")}`;
+        }
+        return "";
     }
 
-    const filesWithoutLocks = files.filter((file) => !(file.includes(".lock") || file.includes("-lock.")));
+    const { stdout: diff } = await execa("git", ["diff", "--staged", "--diff-filter=ACMR", "--", ...targetFiles], {
+        cwd: gitDir,
+    });
 
-    const { stdout: diff } = await execa("git", ["diff", "--staged", "--", ...filesWithoutLocks], { cwd: gitDir });
+    let finalOutput = diff;
+    if (ignoredFiles.length > 0) {
+        finalOutput += `\n\n[NOTE] The following files were also modified but excluded from the diff to save space:\n${ignoredFiles.join("\n")}`;
+        outro(`Excluded ${ignoredFiles.length} binary/lock files from AI context.`);
+    }
 
-    return diff;
+    return finalOutput;
 };
 
 export const getGitDir = async (): Promise<string> => {
