@@ -94,8 +94,6 @@ const generateCommitMessageFromGitDiff = async ({
             const { stdout } = await execa("git", ["commit", "-m", commitMessage, ...extraArgs]);
             committingChangesSpinner.stop(`${chalk.green("✔")} Successfully committed`);
 
-            outro(stdout);
-
             const remotes = await getGitRemotes();
 
             // user isn't pushing, return early
@@ -244,7 +242,7 @@ export async function commit(
     }
 
     stagedFilesSpinner.stop(
-        `${stagedFiles.length} staged files:\n ${stagedFiles.map((file) => `  ${file}`).join("\n")}`
+        `${stagedFiles.length} staged files:\n ${stagedFiles.map((file) => `  ${file}`).join("\n ")}`
     );
 
     const [, generateCommitError] = await trytm(

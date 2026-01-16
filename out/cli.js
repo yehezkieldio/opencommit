@@ -1385,8 +1385,7 @@ const generateCommitMessageFromGitDiff = async ({ diff, extraArgs: extraArgs$1, 
 			extraArgs$1.splice(messageTemplateIndex, 1);
 			commitMessage = messageTemplate.replace(config.OCO_MESSAGE_TEMPLATE_PLACEHOLDER, commitMessage);
 		}
-		commitGenerationSpinner.stop("📝 Commit message generated");
-		outro(`Generated commit message:
+		outro(`
 ${chalk.grey("——————————————————")}
 ${commitMessage}
 ${chalk.grey("——————————————————")}`);
@@ -1493,7 +1492,7 @@ ${chalk.grey("——————————————————")}`);
 		process.exit(1);
 	}
 };
-async function commit(extraArgs$1 = [], context = "", isStageAllFlag = false, skipCommitConfirmation = false) {
+async function commit(extraArgs$1 = [], context = "", isStageAllFlag = false, skipCommitConfirmation = true) {
 	if (isStageAllFlag) {
 		const changedFiles$1 = await getChangedFiles();
 		if (changedFiles$1) await gitAdd({ files: changedFiles$1 });
