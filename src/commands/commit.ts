@@ -91,8 +91,8 @@ const generateCommitMessageFromGitDiff = async ({
         if (userAction === "Yes" || userAction === "Edit") {
             const committingChangesSpinner = spinner();
             committingChangesSpinner.start("Committing the changes");
-            const { stdout } = await execa("git", ["commit", "-m", commitMessage, ...extraArgs]);
-            committingChangesSpinner.stop(`${chalk.green("✔")} Successfully committed`);
+            await execa("git", ["commit", "-m", commitMessage, ...extraArgs]);
+            committingChangesSpinner.stop("Successfully committed");
 
             const remotes = await getGitRemotes();
 
@@ -100,8 +100,7 @@ const generateCommitMessageFromGitDiff = async ({
             if (config.OCO_GITPUSH === false) return;
 
             if (!remotes.length) {
-                const { stdout } = await execa("git", ["push"]);
-                if (stdout) outro(stdout);
+                await execa("git", ["push"]);
                 process.exit(0);
             }
 
@@ -119,7 +118,7 @@ const generateCommitMessageFromGitDiff = async ({
 
                     const { stdout } = await execa("git", ["push", "--verbose", remotes[0] as string]);
 
-                    pushSpinner.stop(`${chalk.green("✔")} Successfully pushed all commits to ${remotes[0]}`);
+                    pushSpinner.stop(`Successfully pushed all commits to ${remotes[0]}`);
 
                     if (stdout) outro(stdout);
                 } else {
@@ -147,7 +146,7 @@ const generateCommitMessageFromGitDiff = async ({
 
                     if (stdout) outro(stdout);
 
-                    pushSpinner.stop(`${chalk.green("✔")} successfully pushed all commits to ${selectedRemote}`);
+                    pushSpinner.stop(`Successfully pushed all commits to ${selectedRemote}`);
                 }
             }
         } else {
@@ -165,7 +164,7 @@ const generateCommitMessageFromGitDiff = async ({
             }
         }
     } catch (error) {
-        commitGenerationSpinner.stop(`${chalk.red("✖")} Failed to generate the commit message`);
+        commitGenerationSpinner.stop("Failed to generate the commit message");
 
         console.log(error);
 
@@ -201,7 +200,7 @@ export async function commit(
 
     intro("open-commit");
     if (errorChangedFiles ?? errorStagedFiles) {
-        outro(`${chalk.red("✖")} ${errorChangedFiles ?? errorStagedFiles}`);
+        outro(`${errorChangedFiles ?? errorStagedFiles}`);
         process.exit(1);
     }
 
@@ -255,7 +254,7 @@ export async function commit(
     );
 
     if (generateCommitError) {
-        outro(`${chalk.red("✖")} ${generateCommitError}`);
+        outro(`${generateCommitError}`);
         process.exit(1);
     }
 
