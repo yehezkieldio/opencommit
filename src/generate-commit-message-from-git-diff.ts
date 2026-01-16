@@ -38,12 +38,14 @@ interface ChunkSummary {
 // Error Enums
 // ============================================================================
 
-export enum GenerateCommitMessageErrorEnum {
-    tooMuchTokens = "TOO_MUCH_TOKENS",
-    internalError = "INTERNAL_ERROR",
-    emptyMessage = "EMPTY_MESSAGE",
-    outputTokensTooHigh = `Token limit exceeded, OCO_TOKENS_MAX_OUTPUT must not be much higher than the default ${DEFAULT_TOKEN_LIMITS.DEFAULT_MAX_TOKENS_OUTPUT} tokens.`,
-}
+export const GenerateCommitMessageErrorEnum = {
+    tooMuchTokens: "TOO_MUCH_TOKENS",
+    internalError: "INTERNAL_ERROR",
+    emptyMessage: "EMPTY_MESSAGE",
+    outputTokensTooHigh: `Token limit exceeded, OCO_TOKENS_MAX_OUTPUT must not be much higher than the default ${DEFAULT_TOKEN_LIMITS.DEFAULT_MAX_TOKENS_OUTPUT} tokens.`,
+} as const;
+export type GenerateCommitMessageErrorEnum =
+    (typeof GenerateCommitMessageErrorEnum)[keyof typeof GenerateCommitMessageErrorEnum];
 
 // ============================================================================
 // Constants
@@ -252,7 +254,9 @@ async function runWithConcurrency<T>(
     while (queue.length > 0 || running.length > 0) {
         // Fill up to concurrency limit
         while (running.length < concurrency && queue.length > 0) {
-            const { item, index } = queue.shift()!;
+            const queueItem = queue.shift();
+            if (!queueItem) break;
+            const { item, index } = queueItem;
             const promise = fn(item, index).finally(() => {
                 const idx = running.indexOf(promise);
                 if (idx > -1) running.splice(idx, 1);
@@ -484,7 +488,7 @@ export const generateCommitMessageByDiff = async (diff: string, context = ""): P
     });
 
     if (!budget.isValid) {
-        throw new TokenBudgetError(budget.errorReason!);
+        throw new TokenBudgetError(budget.errorReason ?? "Token budget exceeded");
     }
 
     const diffTokens = tokenCount(diff);

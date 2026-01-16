@@ -87,7 +87,7 @@ export class TokenBudgetError extends Error {
 export function requireValidTokenBudget(options: TokenBudgetOptions): TokenBudgetResult {
     const result = computeTokenBudget(options);
     if (!result.isValid) {
-        throw new TokenBudgetError(result.errorReason!);
+        throw new TokenBudgetError(result.errorReason ?? "Unknown error");
     }
     return result;
 }

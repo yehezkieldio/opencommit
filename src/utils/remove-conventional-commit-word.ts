@@ -1,3 +1,5 @@
+const CONVENTIONAL_COMMIT_REGEX = /^(fix|feat)\((.+?)\):/;
+
 export function removeConventionalCommitWord(message: string): string {
-    return message.replace(/^(fix|feat)\((.+?)\):/, "($2):");
+    return message.replace(CONVENTIONAL_COMMIT_REGEX, "($2):");
 }

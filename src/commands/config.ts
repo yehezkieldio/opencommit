@@ -8,28 +8,30 @@ import * as dotenv from "dotenv";
 import { parse as iniParse, stringify as iniStringify } from "ini";
 import { COMMANDS } from "./enum.js";
 
-export enum CONFIG_KEYS {
-    OCO_API_KEY = "OCO_API_KEY",
-    OCO_TOKENS_MAX_INPUT = "OCO_TOKENS_MAX_INPUT",
-    OCO_TOKENS_MAX_OUTPUT = "OCO_TOKENS_MAX_OUTPUT",
-    OCO_DESCRIPTION = "OCO_DESCRIPTION",
-    OCO_EMOJI = "OCO_EMOJI",
-    OCO_MODEL = "OCO_MODEL",
-    OCO_WHY = "OCO_WHY",
-    OCO_MESSAGE_TEMPLATE_PLACEHOLDER = "OCO_MESSAGE_TEMPLATE_PLACEHOLDER",
-    OCO_AI_PROVIDER = "OCO_AI_PROVIDER",
-    OCO_ONE_LINE_COMMIT = "OCO_ONE_LINE_COMMIT",
-    OCO_API_URL = "OCO_API_URL",
-    OCO_API_CUSTOM_HEADERS = "OCO_API_CUSTOM_HEADERS",
-    OCO_OMIT_SCOPE = "OCO_OMIT_SCOPE",
-    OCO_GITPUSH = "OCO_GITPUSH", // todo: deprecate
-}
+export const CONFIG_KEYS = {
+    OCO_API_KEY: "OCO_API_KEY",
+    OCO_TOKENS_MAX_INPUT: "OCO_TOKENS_MAX_INPUT",
+    OCO_TOKENS_MAX_OUTPUT: "OCO_TOKENS_MAX_OUTPUT",
+    OCO_DESCRIPTION: "OCO_DESCRIPTION",
+    OCO_EMOJI: "OCO_EMOJI",
+    OCO_MODEL: "OCO_MODEL",
+    OCO_WHY: "OCO_WHY",
+    OCO_MESSAGE_TEMPLATE_PLACEHOLDER: "OCO_MESSAGE_TEMPLATE_PLACEHOLDER",
+    OCO_AI_PROVIDER: "OCO_AI_PROVIDER",
+    OCO_ONE_LINE_COMMIT: "OCO_ONE_LINE_COMMIT",
+    OCO_API_URL: "OCO_API_URL",
+    OCO_API_CUSTOM_HEADERS: "OCO_API_CUSTOM_HEADERS",
+    OCO_OMIT_SCOPE: "OCO_OMIT_SCOPE",
+    OCO_GITPUSH: "OCO_GITPUSH", // todo: deprecate
+} as const;
+export type CONFIG_KEYS = (typeof CONFIG_KEYS)[keyof typeof CONFIG_KEYS];
 
-export enum CONFIG_MODES {
-    get = "get",
-    set = "set",
-    describe = "describe",
-}
+export const CONFIG_MODES = {
+    get: "get",
+    set: "set",
+    describe: "describe",
+} as const;
+export type CONFIG_MODES = (typeof CONFIG_MODES)[keyof typeof CONFIG_MODES];
 
 export const MODEL_LIST = {
     azure: ["gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-3.5-turbo"],
@@ -39,12 +41,13 @@ const getDefaultModel = (_provider: string | undefined): string => {
     return MODEL_LIST.azure[0];
 };
 
-export enum DEFAULT_TOKEN_LIMITS {
-    DEFAULT_MAX_TOKENS_INPUT = 4096,
-    DEFAULT_MAX_TOKENS_OUTPUT = 500,
-}
+export const DEFAULT_TOKEN_LIMITS = {
+    DEFAULT_MAX_TOKENS_INPUT: 4096,
+    DEFAULT_MAX_TOKENS_OUTPUT: 500,
+} as const;
+export type DEFAULT_TOKEN_LIMITS = (typeof DEFAULT_TOKEN_LIMITS)[keyof typeof DEFAULT_TOKEN_LIMITS];
 
-const validateConfig = (key: string, condition: any, validationMessage: string) => {
+const validateConfig = (key: string, condition: boolean, validationMessage: string) => {
     if (!condition) {
         outro(`${chalk.red("✖")} wrong value for ${key}: ${validationMessage}.`);
 
@@ -55,108 +58,111 @@ const validateConfig = (key: string, condition: any, validationMessage: string) 
 };
 
 export const configValidators = {
-    [CONFIG_KEYS.OCO_API_KEY](value: any) {
+    [CONFIG_KEYS.OCO_API_KEY](value: unknown) {
         validateConfig(
             "OCO_API_KEY",
-            value,
+            !!value,
             'You need to provide the OCO_API_KEY when OCO_AI_PROVIDER set to "azure".'
         );
-        return value;
+        return value as string;
     },
 
-    [CONFIG_KEYS.OCO_DESCRIPTION](value: any) {
+    [CONFIG_KEYS.OCO_DESCRIPTION](value: unknown) {
         validateConfig(CONFIG_KEYS.OCO_DESCRIPTION, typeof value === "boolean", "Must be boolean: true or false");
 
-        return value;
+        return value as boolean;
     },
 
-    [CONFIG_KEYS.OCO_API_CUSTOM_HEADERS](value: any) {
+    [CONFIG_KEYS.OCO_API_CUSTOM_HEADERS](value: unknown) {
         try {
             // Custom headers must be a valid JSON string
             if (typeof value === "string") {
                 JSON.parse(value);
             }
-            return value;
+            return value as string;
         } catch (error) {
             validateConfig(CONFIG_KEYS.OCO_API_CUSTOM_HEADERS, false, "Must be a valid JSON string of headers");
         }
     },
 
-    [CONFIG_KEYS.OCO_TOKENS_MAX_INPUT](value: any) {
-        value = Number.parseInt(value, 10);
+    [CONFIG_KEYS.OCO_TOKENS_MAX_INPUT](value: unknown) {
+        // biome-ignore lint/style/noParameterAssign: it's fine here
+        value = Number.parseInt(String(value), 10);
         validateConfig(CONFIG_KEYS.OCO_TOKENS_MAX_INPUT, !Number.isNaN(value), "Must be a number");
 
-        return value;
+        return value as number;
     },
 
-    [CONFIG_KEYS.OCO_TOKENS_MAX_OUTPUT](value: any) {
-        value = Number.parseInt(value, 10);
+    [CONFIG_KEYS.OCO_TOKENS_MAX_OUTPUT](value: unknown) {
+        // biome-ignore lint/style/noParameterAssign: it's fine here
+        value = Number.parseInt(String(value), 10);
         validateConfig(CONFIG_KEYS.OCO_TOKENS_MAX_OUTPUT, !Number.isNaN(value), "Must be a number");
 
-        return value;
+        return value as number;
     },
 
-    [CONFIG_KEYS.OCO_EMOJI](value: any) {
+    [CONFIG_KEYS.OCO_EMOJI](value: unknown) {
         validateConfig(CONFIG_KEYS.OCO_EMOJI, typeof value === "boolean", "Must be boolean: true or false");
 
-        return value;
+        return value as boolean;
     },
 
-    [CONFIG_KEYS.OCO_OMIT_SCOPE](value: any) {
+    [CONFIG_KEYS.OCO_OMIT_SCOPE](value: unknown) {
         validateConfig(CONFIG_KEYS.OCO_OMIT_SCOPE, typeof value === "boolean", "Must be boolean: true or false");
 
-        return value;
+        return value as boolean;
     },
 
-    [CONFIG_KEYS.OCO_API_URL](value: any) {
+    [CONFIG_KEYS.OCO_API_URL](value: unknown) {
         validateConfig(
             CONFIG_KEYS.OCO_API_URL,
             typeof value === "string",
             `${value} is not a valid URL. It should start with 'http://' or 'https://'.`
         );
-        return value;
+        return value as string;
     },
 
-    [CONFIG_KEYS.OCO_MODEL](value: any) {
+    [CONFIG_KEYS.OCO_MODEL](value: unknown) {
         validateConfig(CONFIG_KEYS.OCO_MODEL, typeof value === "string", `${value} is not supported.`);
-        return value;
+        return value as string;
     },
 
-    [CONFIG_KEYS.OCO_MESSAGE_TEMPLATE_PLACEHOLDER](value: any) {
+    [CONFIG_KEYS.OCO_MESSAGE_TEMPLATE_PLACEHOLDER](value: unknown) {
         validateConfig(
             CONFIG_KEYS.OCO_MESSAGE_TEMPLATE_PLACEHOLDER,
-            value.startsWith("$"),
+            (value as string).startsWith("$"),
             `${value} must start with $, for example: '$msg'`
         );
-        return value;
+        return value as string;
     },
 
     // todo: deprecate
-    [CONFIG_KEYS.OCO_GITPUSH](value: any) {
+    [CONFIG_KEYS.OCO_GITPUSH](value: unknown) {
         validateConfig(CONFIG_KEYS.OCO_GITPUSH, typeof value === "boolean", "Must be true or false");
         return value;
     },
 
-    [CONFIG_KEYS.OCO_AI_PROVIDER](value: any) {
+    [CONFIG_KEYS.OCO_AI_PROVIDER](value: unknown) {
         validateConfig(CONFIG_KEYS.OCO_AI_PROVIDER, value === "azure", `${value} is not supported, use 'azure'`);
-        return value;
+        return value as OCO_AI_PROVIDER_ENUM;
     },
 
-    [CONFIG_KEYS.OCO_ONE_LINE_COMMIT](value: any) {
+    [CONFIG_KEYS.OCO_ONE_LINE_COMMIT](value: unknown) {
         validateConfig(CONFIG_KEYS.OCO_ONE_LINE_COMMIT, typeof value === "boolean", "Must be true or false");
 
-        return value;
+        return value as boolean;
     },
 
-    [CONFIG_KEYS.OCO_WHY](value: any) {
+    [CONFIG_KEYS.OCO_WHY](value: unknown) {
         validateConfig(CONFIG_KEYS.OCO_WHY, typeof value === "boolean", "Must be true or false");
-        return value;
+        return value as boolean;
     },
 };
 
-export enum OCO_AI_PROVIDER_ENUM {
-    AZURE = "azure",
-}
+export const OCO_AI_PROVIDER_ENUM = {
+    AZURE: "azure",
+} as const;
+export type OCO_AI_PROVIDER_ENUM = (typeof OCO_AI_PROVIDER_ENUM)[keyof typeof OCO_AI_PROVIDER_ENUM];
 
 export type ConfigType = {
     [CONFIG_KEYS.OCO_API_KEY]?: string;
@@ -199,9 +205,10 @@ const initGlobalConfig = (configPath: string = defaultConfigPath) => {
     return DEFAULT_CONFIG;
 };
 
-const parseConfigVarValue = (value?: any) => {
+const parseConfigVarValue = (value?: unknown) => {
     try {
-        return JSON.parse(value);
+        if (typeof value === "string") return JSON.parse(value);
+        return value;
     } catch (error) {
         return value;
     }
@@ -260,7 +267,9 @@ export const getGlobalConfig = (configPath: string = defaultConfigPath) => {
 const mergeConfigs = (main: Partial<ConfigType>, fallback: ConfigType) => {
     const allKeys = new Set([...Object.keys(main), ...Object.keys(fallback)]);
     return Array.from(allKeys).reduce((acc, key) => {
-        (acc as any)[key] = parseConfigVarValue(main[key as keyof ConfigType] ?? fallback[key as keyof ConfigType]);
+        (acc as Record<string, unknown>)[key] = parseConfigVarValue(
+            main[key as keyof ConfigType] ?? fallback[key as keyof ConfigType]
+        );
         return acc;
     }, {} as ConfigType);
 };
@@ -322,7 +331,7 @@ export const setConfig = (
             );
         }
 
-        let parsedConfigValue;
+        let parsedConfigValue: unknown;
 
         try {
             if (typeof value === "string") parsedConfigValue = JSON.parse(value);
@@ -333,7 +342,8 @@ export const setConfig = (
 
         const validValue = configValidators[key as CONFIG_KEYS](parsedConfigValue);
 
-        configToSet[key as keyof ConfigType] = validValue;
+        // biome-ignore lint/suspicious/noExplicitAny: needed for dynamic assignment to partial config
+        configToSet[key as keyof ConfigType] = validValue as any;
     }
 
     setGlobalConfig(mergeConfigs(configToSet, config), globalConfigPath);
@@ -342,7 +352,7 @@ export const setConfig = (
 };
 
 // --- HELP MESSAGE GENERATION ---
-function getConfigKeyDetails(key: any) {
+function getConfigKeyDetails(key: string) {
     switch (key) {
         case CONFIG_KEYS.OCO_MODEL:
             return {
@@ -430,7 +440,7 @@ function printConfigKeyHelp(param: string) {
     const details = getConfigKeyDetails(param as CONFIG_KEYS);
 
     const desc = details.description;
-    let defaultValue;
+    let defaultValue: unknown;
     if (param in DEFAULT_CONFIG) {
         defaultValue = DEFAULT_CONFIG[param as keyof typeof DEFAULT_CONFIG];
     }
@@ -448,17 +458,17 @@ function printConfigKeyHelp(param: string) {
 
     if (Array.isArray(details.values)) {
         console.log(chalk.gray("  Accepted values:"));
-        details.values.forEach((value) => {
+        for (const value of details.values) {
             console.log(chalk.gray(`    - ${value}`));
-        });
+        }
     } else {
         console.log(chalk.gray("  Accepted values by provider:"));
-        Object.entries(details.values).forEach(([provider, values]) => {
+        for (const [provider, values] of Object.entries(details.values)) {
             console.log(chalk.gray(`    ${provider}:`));
-            (values as string[]).forEach((value) => {
+            for (const value of values as string[]) {
                 console.log(chalk.gray(`      - ${value}`));
-            });
-        });
+            }
+        }
     }
 }
 
@@ -467,7 +477,7 @@ function printAllConfigHelp() {
     for (const key of Object.values(CONFIG_KEYS).sort()) {
         const details = getConfigKeyDetails(key);
         // Try to get the default value from DEFAULT_CONFIG
-        let defaultValue;
+        let defaultValue: unknown;
         if (key in DEFAULT_CONFIG) {
             defaultValue = DEFAULT_CONFIG[key as keyof typeof DEFAULT_CONFIG];
         }

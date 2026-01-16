@@ -19,6 +19,7 @@ export const assertGitRepo = async () => {
 export const getOpenCommitIgnore = async (): Promise<Ignore> => {
     const gitDir = await getGitDir();
 
+    // biome-ignore lint/suspicious/noExplicitAny: ignore type definition mismatch
     const ig = (ignore as any)();
 
     try {
