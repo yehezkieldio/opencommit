@@ -42,23 +42,16 @@
     "start": "bun run ./out/cli.cjs",
     "dev": "bun run ./src/cli.ts",
     "build": "bunx rimraf out && bun esbuild.config.js",
-    "lint": "eslint src --ext ts && tsc --noEmit",
-    "format": "prettier --write src",
-    "format:check": "prettier --check src",
+    "lint": "biome check",
+    "lint:fix": "biome  check --write --unsafe .",
+    "format": "biome format --write",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.3.11",
     "@types/ini": "^4.1.1",
-    "@types/node": "^25.0.9",
-    "@typescript-eslint/eslint-plugin": "^8.29.0",
-    "@typescript-eslint/parser": "^8.29.0",
-    "dotenv": "^17.2.3",
-    "esbuild": "^0.27.2",
-    "eslint": "^9.24.0",
-    "prettier": "^3.8.0",
-    "rimraf": "^6.0.1",
-    "ts-node": "^10.9.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "ultracite": "^7.0.11"
   },
   "dependencies": {
     "@azure/openai": "^2.0.0",

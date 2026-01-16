@@ -6,17 +6,17 @@
  * @returns The extracted file name, or 'unknown' if parsing fails
  */
 export function extractFileName(fileDiff: string): string {
-  // Match pattern: "a/path/to/file.ts b/path/to/file.ts"
-  const match = fileDiff.match(/^a\/(.+?)\s+b\//);
-  if (match) {
-    return match[1];
-  }
+    // Match pattern: "a/path/to/file.ts b/path/to/file.ts"
+    const match = fileDiff.match(/^a\/(.+?)\s+b\//);
+    if (match) {
+        return match[1];
+    }
 
-  // Fallback: try to get from +++ line
-  const plusMatch = fileDiff.match(/\+\+\+ b\/(.+)/);
-  if (plusMatch) {
-    return plusMatch[1];
-  }
+    // Fallback: try to get from +++ line
+    const plusMatch = fileDiff.match(/\+\+\+ b\/(.+)/);
+    if (plusMatch) {
+        return plusMatch[1];
+    }
 
-  return 'unknown';
+    return "unknown";
 }

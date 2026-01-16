@@ -1,31 +1,24 @@
-import AnthropicClient from '@anthropic-ai/sdk';
-import { AzureOpenAI as AzureOpenAIClient } from 'openai';
-import { GoogleGenerativeAI as GeminiClient } from '@google/generative-ai';
-import { AxiosInstance as RawAxiosClient } from 'axios';
-import { OpenAI as OpenAIClient } from 'openai';
-import { Mistral as MistralClient } from '@mistralai/mistralai';
+import type AnthropicClient from "@anthropic-ai/sdk";
+import type { GoogleGenerativeAI as GeminiClient } from "@google/generative-ai";
+import type { Mistral as MistralClient } from "@mistralai/mistralai";
+import type { AxiosInstance as RawAxiosClient } from "axios";
+import type { AzureOpenAI as AzureOpenAIClient, OpenAI as OpenAIClient } from "openai";
 
 export interface AiEngineConfig {
-  apiKey: string;
-  model: string;
-  maxTokensOutput: number;
-  maxTokensInput: number;
-  baseURL?: string;
-  customHeaders?: Record<string, string>;
+    apiKey: string;
+    model: string;
+    maxTokensOutput: number;
+    maxTokensInput: number;
+    baseURL?: string;
+    customHeaders?: Record<string, string>;
 }
 
-type Client =
-  | OpenAIClient
-  | AzureOpenAIClient
-  | AnthropicClient
-  | RawAxiosClient
-  | GeminiClient
-  | MistralClient;
+type Client = OpenAIClient | AzureOpenAIClient | AnthropicClient | RawAxiosClient | GeminiClient | MistralClient;
 
 export interface AiEngine {
-  config: AiEngineConfig;
-  client: Client;
-  generateCommitMessage(
-    messages: Array<OpenAIClient.Chat.Completions.ChatCompletionMessageParam>
-  ): Promise<string | null | undefined>;
+    config: AiEngineConfig;
+    client: Client;
+    generateCommitMessage(
+        messages: OpenAIClient.Chat.Completions.ChatCompletionMessageParam[]
+    ): Promise<string | null | undefined>;
 }

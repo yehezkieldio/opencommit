@@ -1,3 +1,3 @@
 export enum COMMANDS {
-  config = 'config'
+    config = "config",
 }
