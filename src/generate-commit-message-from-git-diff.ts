@@ -1,10 +1,10 @@
 import type { OpenAI } from "openai";
 import { DEFAULT_TOKEN_LIMITS, getConfig } from "./commands/config.js";
-import { getMainCommitPrompt, getSynthesisPrompt, SUMMARY_PROMPT } from "./prompts.js";
+import { getMainCommitPrompt, getThemeSynthesisPrompt, INTENT_EXTRACTION_PROMPT, SUMMARY_PROMPT } from "./prompts.js";
 import { getEngine } from "./utils/engine.js";
 import { extractFileName } from "./utils/extract-file-name.js";
 import { mergeDiffs } from "./utils/merge-diffs.js";
-import { sliceToTokenLimit, splitToTokenChunks } from "./utils/slice-to-token-limit.js";
+import { splitToTokenChunks } from "./utils/slice-to-token-limit.js";
 import { computeTokenBudget, TokenBudgetError } from "./utils/token-budget.js";
 import { tokenCount } from "./utils/token-count.js";
 import { ensureValidCommitMessage } from "./utils/validate-commit-message.js";
@@ -32,6 +32,16 @@ interface DiffChunk {
 interface ChunkSummary {
     summary: string;
     files: string[];
+}
+
+/**
+ * A high-level theme extracted from file summaries (Intent Extraction phase output).
+ */
+interface Theme {
+    title: string;
+    description: string;
+    fileCount: number;
+    scope: "architectural" | "feature" | "fix" | "refactor" | "chore";
 }
 
 // ============================================================================
@@ -62,8 +72,6 @@ const MAX_CONCURRENCY = 2;
 const INITIAL_BACKOFF_MS = 500;
 /** Maximum delay for exponential backoff (ms) */
 const MAX_BACKOFF_MS = 10_000;
-/** Maximum recursion depth for reduce phase */
-const MAX_REDUCTION_DEPTH = 5;
 
 // ============================================================================
 // Helper Functions
@@ -327,42 +335,121 @@ async function getDiffSummaries(chunks: DiffChunk[]): Promise<ChunkSummary[]> {
     return summaries;
 }
 
+const JSON_MATCH_REGEX = /```(?:json)?\s*([\s\S]*?)```/;
+
 // ============================================================================
-// Reduce Phase: Synthesizing Final Message
+// Intent Extraction Phase: Extracting High-Level Themes
 // ============================================================================
 
 /**
- * REDUCE PHASE: Combines all chunk summaries into a single commit message.
- * Handles recursive reduction if summaries are too long.
+ * INTENT EXTRACTION PHASE: Extracts high-level themes from file summaries.
+ * This bridges the gap between file-specific Map phase output and synthesis.
+ *
+ * Key features:
+ * - Aggregates file counts across summaries for weighting
+ * - Uses specialized prompt that forbids file-level trivia
+ * - Returns structured themes with scope classification
+ */
+async function extractThemes(summaries: ChunkSummary[]): Promise<Theme[]> {
+    const engine = getEngine();
+
+    // Prepare weighted input: include file counts for each summary
+    const weightedSummaries = summaries.map((s) => {
+        const fileCount = s.files.length;
+        const fileLabel = fileCount === 1 ? "1 file" : `${fileCount} files`;
+        return `- [${fileLabel}] ${s.summary}`;
+    });
+
+    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        INTENT_EXTRACTION_PROMPT,
+        {
+            role: "user",
+            content: `Extract high-level themes from these file-level change summaries:\n\n${weightedSummaries.join("\n")}`,
+        },
+    ];
+
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (attempts < maxAttempts) {
+        try {
+            const response = await engine.generateCommitMessage(messages);
+            if (response) {
+                // Parse JSON response - extract from markdown code blocks if present
+                let jsonStr = response.trim();
+
+                // Handle markdown code blocks
+                const jsonMatch = jsonStr.match(JSON_MATCH_REGEX);
+                if (jsonMatch?.[1]) {
+                    jsonStr = jsonMatch[1].trim();
+                }
+
+                const parsed = JSON.parse(jsonStr);
+                if (parsed.themes && Array.isArray(parsed.themes)) {
+                    return parsed.themes.map((t: Partial<Theme>) => ({
+                        title: t.title || "Changes",
+                        description: t.description || "",
+                        fileCount: t.fileCount || 1,
+                        scope: t.scope || "chore",
+                    }));
+                }
+            }
+        } catch (error) {
+            attempts++;
+            if (attempts < maxAttempts) {
+                await exponentialBackoff(attempts);
+            }
+        }
+    }
+
+    // Fallback: create a single generic theme from all summaries
+    const totalFiles = new Set(summaries.flatMap((s) => s.files)).size;
+    return [
+        {
+            title: "Multiple changes",
+            description: summaries
+                .map((s) => s.summary)
+                .join("; ")
+                .slice(0, 200),
+            fileCount: totalFiles,
+            scope: "chore",
+        },
+    ];
+}
+
+// ============================================================================
+// Reduce Phase: Synthesizing Final Message from Themes
+// ============================================================================
+
+/**
+ * REDUCE PHASE: Combines extracted themes into a single commit message.
+ * Now operates on high-level themes instead of raw file summaries.
  */
 async function synthesizeCommitMessage(summaries: ChunkSummary[], context: string): Promise<string> {
     const engine = getEngine();
 
-    // Combine all summaries into a structured format
-    const combinedSummary = summaries
-        .map((s) => {
-            const fileList = s.files.length > 0 ? `**Files:** ${s.files.join(", ")}\n` : "";
-            return `${fileList}${s.summary}`;
+    // INTENT EXTRACTION: Extract high-level themes from summaries
+    const themes = await extractThemes(summaries);
+
+    // Sort themes by file count (descending) for priority
+    const sortedThemes = [...themes].sort((a, b) => b.fileCount - a.fileCount);
+
+    // Format themes for synthesis prompt
+    const themesContent = sortedThemes
+        .map((t, i) => {
+            const priority = i === 0 ? "[PRIMARY]" : "[SECONDARY]";
+            return `${priority} ${t.title} (${t.fileCount} files, ${t.scope})
+   ${t.description}`;
         })
-        .join("\n\n---\n\n");
+        .join("\n\n");
 
-    // Check if combined summary fits in context
-    const synthesisPrompt = getSynthesisPrompt(context);
-    const promptTokens = tokenCount(synthesisPrompt.content as string);
-    const maxSummaryTokens = MAX_TOKENS_INPUT - promptTokens - MAX_TOKENS_OUTPUT - ADJUSTMENT_FACTOR;
-
-    let finalSummary = combinedSummary;
-
-    // Recursive reduction if summaries are too long
-    if (tokenCount(combinedSummary) > maxSummaryTokens) {
-        finalSummary = await recursivelyReduceSummaries(summaries, maxSummaryTokens, 0);
-    }
+    const synthesisPrompt = getThemeSynthesisPrompt(context);
 
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         synthesisPrompt,
         {
             role: "user",
-            content: `Here is a summary of all changes in this commit:\n\n${finalSummary}`,
+            content: `Generate a commit message from these extracted themes:\n\n${themesContent}`,
         },
     ];
 
@@ -373,92 +460,6 @@ async function synthesizeCommitMessage(summaries: ChunkSummary[], context: strin
 
     // Validate and repair if necessary
     return await ensureValidCommitMessage(commitMessage);
-}
-
-/**
- * Recursively reduces summaries when they exceed token limits.
- * Uses token-aware trimming and has a max depth safeguard.
- */
-async function recursivelyReduceSummaries(
-    summaries: ChunkSummary[],
-    maxTokens: number,
-    depth: number
-): Promise<string> {
-    // Safeguard against infinite recursion
-    if (depth >= MAX_REDUCTION_DEPTH) {
-        const combined = summaries.map((s) => s.summary).join("\n");
-        return sliceToTokenLimit(combined, maxTokens);
-    }
-
-    const engine = getEngine();
-
-    // Group summaries into batches that fit within limits
-    const batches: ChunkSummary[][] = [];
-    let currentBatch: ChunkSummary[] = [];
-    let currentBatchTokens = 0;
-
-    for (const summary of summaries) {
-        const summaryTokens = tokenCount(summary.summary);
-        if (currentBatchTokens + summaryTokens > maxTokens / 2 && currentBatch.length > 0) {
-            batches.push(currentBatch);
-            currentBatch = [];
-            currentBatchTokens = 0;
-        }
-        currentBatch.push(summary);
-        currentBatchTokens += summaryTokens;
-    }
-    if (currentBatch.length > 0) {
-        batches.push(currentBatch);
-    }
-
-    // If only one batch, use token-aware truncation
-    if (batches.length <= 1) {
-        const combined = summaries.map((s) => s.summary).join("\n");
-        return sliceToTokenLimit(combined, maxTokens);
-    }
-
-    // Re-summarize each batch with exponential backoff
-    const reducedSummaries: ChunkSummary[] = [];
-    for (const [i, batch] of batches.entries()) {
-        const batchText = batch.map((s) => s.summary).join("\n");
-        const allFiles = batch.flatMap((s) => s.files);
-
-        const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-            SUMMARY_PROMPT,
-            {
-                role: "user",
-                content: `Consolidate these changes into a shorter summary:\n\n${batchText}`,
-            },
-        ];
-
-        let reduced: string | null | undefined = null;
-        let attempts = 0;
-        while (attempts < 3 && !reduced) {
-            try {
-                reduced = await engine.generateCommitMessage(messages);
-            } catch {
-                attempts++;
-                if (attempts < 3) await exponentialBackoff(attempts);
-            }
-        }
-
-        reducedSummaries.push({
-            summary: reduced || sliceToTokenLimit(batchText, 500),
-            files: allFiles,
-        });
-
-        if (i < batches.length - 1) {
-            await exponentialBackoff(0);
-        }
-    }
-
-    // Check if we need another round of reduction
-    const combinedReduced = reducedSummaries.map((s) => s.summary).join("\n\n");
-    if (tokenCount(combinedReduced) > maxTokens) {
-        return recursivelyReduceSummaries(reducedSummaries, maxTokens, depth + 1);
-    }
-
-    return combinedReduced;
 }
 
 // ============================================================================

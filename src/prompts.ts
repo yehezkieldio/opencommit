@@ -41,6 +41,67 @@ export const SUMMARY_PROMPT: OpenAI.Chat.Completions.ChatCompletionMessageParam 
 - Removed deprecated logging utility`,
 };
 
+/**
+ * INTENT_EXTRACTION_PROMPT for extracting high-level themes from file summaries.
+ * Used between Map and Reduce phases to capture cross-cutting intent.
+ */
+export const INTENT_EXTRACTION_PROMPT: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
+    role: "system",
+    content: `You are a code change analyst. Given summaries of file-level changes with file counts, extract 1-3 HIGH-LEVEL THEMES that describe the overall commit intent.
+
+## Rules:
+- Identify CROSS-FILE PATTERNS, not individual file changes
+- Use ARCHITECTURAL language: "restructures", "introduces", "migrates", "overhauls"
+- Each theme should describe SYSTEM-LEVEL or MODULE-LEVEL intent
+- Prefer breadth (affects many files) over specificity (affects one file)
+- Themes affecting more files should be ranked higher
+- Do NOT use commit prefixes like "feat:", "fix:", etc.
+- Do NOT mention specific file names unless absolutely essential
+
+## Input Format:
+You will receive summaries with file counts, e.g.:
+- [7 files] Added authentication middleware and updated route handlers
+- [1 file] Fixed typo in README
+
+## Output Format:
+Return a JSON object with this exact structure:
+{
+  "themes": [
+    {
+      "title": "Short theme title (3-6 words)",
+      "description": "One sentence describing the architectural or systemic change",
+      "fileCount": 7,
+      "scope": "feature"
+    }
+  ]
+}
+
+## Scope Values:
+- "architectural": Major structural changes, refactoring across modules
+- "feature": New functionality or capabilities
+- "fix": Bug fixes or error corrections
+- "refactor": Code improvements without behavior change
+- "chore": Maintenance, deps, config, or tooling
+
+## Example:
+Input:
+- [5 files] Added JWT validation middleware and updated auth routes
+- [3 files] Updated user service to use new auth tokens
+- [1 file] Fixed typo in error message
+
+Output:
+{
+  "themes": [
+    {
+      "title": "JWT authentication system",
+      "description": "Introduces JWT-based authentication with middleware and updated user service integration",
+      "fileCount": 8,
+      "scope": "feature"
+    }
+  ]
+}`,
+};
+
 const COMMIT_GUIDELINES = `Follow these commit message guidelines:
 
 ## Format Structure
@@ -138,6 +199,44 @@ const userInputCodeContext = (context: string) => {
     }
     return "";
 };
+
+/**
+ * Returns a prompt for synthesizing the final commit message from extracted themes.
+ * This operates on high-level themes, not raw file summaries.
+ */
+export const getThemeSynthesisPrompt = (context: string): OpenAI.Chat.Completions.ChatCompletionMessageParam => ({
+    role: "system",
+    content: (() => {
+        const mission = `${IDENTITY}
+
+You will receive HIGH-LEVEL THEMES extracted from a commit, each with a file count indicating scope.
+Your task is to write **exactly ONE** commit message that captures the primary intent.`;
+
+        const selectionRules = `## Theme Selection Rules:
+- Choose the theme affecting the MOST files as the primary focus
+- If themes have equal file counts, prefer: feature > fix > refactor > chore
+- Secondary themes may be mentioned in the commit body if appropriate
+- Do NOT reference individual files unless essential for clarity`;
+
+        const conventionGuidelines = COMMIT_GUIDELINES;
+        const descriptionGuideline = getDescriptionInstruction();
+        const oneLineCommitGuideline = getOneLineCommitInstruction();
+        const scopeInstruction = getScopeInstruction();
+        const generalGuidelines =
+            "Use the present tense. Lines must not be longer than 74 characters. Use English for the commit message.";
+        const userInputContext = userInputCodeContext(context);
+
+        return `${mission}
+${selectionRules}
+${conventionGuidelines}
+${SINGLE_MESSAGE_CONSTRAINT}
+${descriptionGuideline}
+${oneLineCommitGuideline}
+${scopeInstruction}
+${generalGuidelines}
+${userInputContext}`;
+    })(),
+});
 
 const INIT_MAIN_PROMPT = (context: string): OpenAI.Chat.Completions.ChatCompletionMessageParam => ({
     role: "system",

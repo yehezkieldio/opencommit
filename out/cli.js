@@ -400,6 +400,66 @@ const SUMMARY_PROMPT = {
 - Fixed null pointer exception in error handler
 - Removed deprecated logging utility`
 };
+/**
+* INTENT_EXTRACTION_PROMPT for extracting high-level themes from file summaries.
+* Used between Map and Reduce phases to capture cross-cutting intent.
+*/
+const INTENT_EXTRACTION_PROMPT = {
+	role: "system",
+	content: `You are a code change analyst. Given summaries of file-level changes with file counts, extract 1-3 HIGH-LEVEL THEMES that describe the overall commit intent.
+
+## Rules:
+- Identify CROSS-FILE PATTERNS, not individual file changes
+- Use ARCHITECTURAL language: "restructures", "introduces", "migrates", "overhauls"
+- Each theme should describe SYSTEM-LEVEL or MODULE-LEVEL intent
+- Prefer breadth (affects many files) over specificity (affects one file)
+- Themes affecting more files should be ranked higher
+- Do NOT use commit prefixes like "feat:", "fix:", etc.
+- Do NOT mention specific file names unless absolutely essential
+
+## Input Format:
+You will receive summaries with file counts, e.g.:
+- [7 files] Added authentication middleware and updated route handlers
+- [1 file] Fixed typo in README
+
+## Output Format:
+Return a JSON object with this exact structure:
+{
+  "themes": [
+    {
+      "title": "Short theme title (3-6 words)",
+      "description": "One sentence describing the architectural or systemic change",
+      "fileCount": 7,
+      "scope": "feature"
+    }
+  ]
+}
+
+## Scope Values:
+- "architectural": Major structural changes, refactoring across modules
+- "feature": New functionality or capabilities
+- "fix": Bug fixes or error corrections
+- "refactor": Code improvements without behavior change
+- "chore": Maintenance, deps, config, or tooling
+
+## Example:
+Input:
+- [5 files] Added JWT validation middleware and updated auth routes
+- [3 files] Updated user service to use new auth tokens
+- [1 file] Fixed typo in error message
+
+Output:
+{
+  "themes": [
+    {
+      "title": "JWT authentication system",
+      "description": "Introduces JWT-based authentication with middleware and updated user service integration",
+      "fileCount": 8,
+      "scope": "feature"
+    }
+  ]
+}`
+};
 const COMMIT_GUIDELINES = `Follow these commit message guidelines:
 
 ## Format Structure
@@ -481,6 +541,29 @@ const userInputCodeContext = (context) => {
 	if (context !== "" && context !== " ") return `Additional context provided by the user: <context>${context}</context>\nConsider this context when generating the commit message, incorporating relevant information when appropriate.`;
 	return "";
 };
+/**
+* Returns a prompt for synthesizing the final commit message from extracted themes.
+* This operates on high-level themes, not raw file summaries.
+*/
+const getThemeSynthesisPrompt = (context) => ({
+	role: "system",
+	content: `${`${IDENTITY}
+
+You will receive HIGH-LEVEL THEMES extracted from a commit, each with a file count indicating scope.
+Your task is to write **exactly ONE** commit message that captures the primary intent.`}
+## Theme Selection Rules:
+- Choose the theme affecting the MOST files as the primary focus
+- If themes have equal file counts, prefer: feature > fix > refactor > chore
+- Secondary themes may be mentioned in the commit body if appropriate
+- Do NOT reference individual files unless essential for clarity
+${COMMIT_GUIDELINES}
+${SINGLE_MESSAGE_CONSTRAINT}
+${getDescriptionInstruction()}
+${getOneLineCommitInstruction()}
+${getScopeInstruction()}
+Use the present tense. Lines must not be longer than 74 characters. Use English for the commit message.
+${userInputCodeContext(context)}`
+});
 const INIT_MAIN_PROMPT = (context) => ({
 	role: "system",
 	content: `${`${IDENTITY} Your mission is to create clean and comprehensive commit messages following the Conventional Commit Convention and explain WHAT were the changes and mainly WHY the changes were done.`}\nI'll send you an output of 'git diff --staged' command, and you are to convert it into a commit message.\n${getCommitConvention()}\n${SINGLE_MESSAGE_CONSTRAINT}\n${getDescriptionInstruction()}\n${getOneLineCommitInstruction()}\n${getScopeInstruction()}\nUse the present tense. Lines must not be longer than 74 characters. Use English for the commit message.\n${userInputCodeContext(context)}`
@@ -512,20 +595,6 @@ const INIT_DIFF_PROMPT = {
                     +  console.log(\`Server listening on port \${PORT}\`);
                 });`
 };
-const getSynthesisPrompt = (context) => ({
-	role: "system",
-	content: `${`${IDENTITY}
-
-You will receive a summary of all changes across multiple files/chunks in a git commit.
-Your task is to write **exactly ONE** commit message that covers all changes.`}
-${COMMIT_GUIDELINES}
-${SINGLE_MESSAGE_CONSTRAINT}
-${getDescriptionInstruction()}
-${getOneLineCommitInstruction()}
-${getScopeInstruction()}
-Use the present tense. Lines must not be longer than 74 characters. Use English for the commit message.
-${userInputCodeContext(context)}`
-});
 const getMainCommitPrompt = async (context) => {
 	return [INIT_MAIN_PROMPT(context), INIT_DIFF_PROMPT];
 };
@@ -952,8 +1021,6 @@ const MAX_CONCURRENCY = 2;
 const INITIAL_BACKOFF_MS = 500;
 /** Maximum delay for exponential backoff (ms) */
 const MAX_BACKOFF_MS = 1e4;
-/** Maximum recursion depth for reduce phase */
-const MAX_REDUCTION_DEPTH = 5;
 /**
 * Creates the chat completion prompt for direct commit message generation.
 */
@@ -1127,74 +1194,70 @@ async function getDiffSummaries(chunks) {
 	}, MAX_CONCURRENCY);
 	return summaries;
 }
+const JSON_MATCH_REGEX = /```(?:json)?\s*([\s\S]*?)```/;
 /**
-* REDUCE PHASE: Combines all chunk summaries into a single commit message.
-* Handles recursive reduction if summaries are too long.
+* INTENT EXTRACTION PHASE: Extracts high-level themes from file summaries.
+* This bridges the gap between file-specific Map phase output and synthesis.
+*
+* Key features:
+* - Aggregates file counts across summaries for weighting
+* - Uses specialized prompt that forbids file-level trivia
+* - Returns structured themes with scope classification
+*/
+async function extractThemes(summaries) {
+	const engine = getEngine();
+	const messages = [INTENT_EXTRACTION_PROMPT, {
+		role: "user",
+		content: `Extract high-level themes from these file-level change summaries:\n\n${summaries.map((s) => {
+			const fileCount = s.files.length;
+			return `- [${fileCount === 1 ? "1 file" : `${fileCount} files`}] ${s.summary}`;
+		}).join("\n")}`
+	}];
+	let attempts = 0;
+	const maxAttempts = 3;
+	while (attempts < maxAttempts) try {
+		const response = await engine.generateCommitMessage(messages);
+		if (response) {
+			let jsonStr = response.trim();
+			const jsonMatch = jsonStr.match(JSON_MATCH_REGEX);
+			if (jsonMatch?.[1]) jsonStr = jsonMatch[1].trim();
+			const parsed = JSON.parse(jsonStr);
+			if (parsed.themes && Array.isArray(parsed.themes)) return parsed.themes.map((t) => ({
+				title: t.title || "Changes",
+				description: t.description || "",
+				fileCount: t.fileCount || 1,
+				scope: t.scope || "chore"
+			}));
+		}
+	} catch (error) {
+		attempts++;
+		if (attempts < maxAttempts) await exponentialBackoff(attempts);
+	}
+	const totalFiles = new Set(summaries.flatMap((s) => s.files)).size;
+	return [{
+		title: "Multiple changes",
+		description: summaries.map((s) => s.summary).join("; ").slice(0, 200),
+		fileCount: totalFiles,
+		scope: "chore"
+	}];
+}
+/**
+* REDUCE PHASE: Combines extracted themes into a single commit message.
+* Now operates on high-level themes instead of raw file summaries.
 */
 async function synthesizeCommitMessage(summaries, context) {
 	const engine = getEngine();
-	const combinedSummary = summaries.map((s) => {
-		return `${s.files.length > 0 ? `**Files:** ${s.files.join(", ")}\n` : ""}${s.summary}`;
-	}).join("\n\n---\n\n");
-	const synthesisPrompt = getSynthesisPrompt(context);
-	const maxSummaryTokens = MAX_TOKENS_INPUT - tokenCount(synthesisPrompt.content) - MAX_TOKENS_OUTPUT - ADJUSTMENT_FACTOR;
-	let finalSummary = combinedSummary;
-	if (tokenCount(combinedSummary) > maxSummaryTokens) finalSummary = await recursivelyReduceSummaries(summaries, maxSummaryTokens, 0);
-	const messages = [synthesisPrompt, {
+	const themesContent = [...await extractThemes(summaries)].sort((a, b) => b.fileCount - a.fileCount).map((t, i) => {
+		return `${i === 0 ? "[PRIMARY]" : "[SECONDARY]"} ${t.title} (${t.fileCount} files, ${t.scope})
+   ${t.description}`;
+	}).join("\n\n");
+	const messages = [getThemeSynthesisPrompt(context), {
 		role: "user",
-		content: `Here is a summary of all changes in this commit:\n\n${finalSummary}`
+		content: `Generate a commit message from these extracted themes:\n\n${themesContent}`
 	}];
 	const commitMessage = await engine.generateCommitMessage(messages);
 	if (!commitMessage) throw new Error(GenerateCommitMessageErrorEnum.emptyMessage);
 	return await ensureValidCommitMessage(commitMessage);
-}
-/**
-* Recursively reduces summaries when they exceed token limits.
-* Uses token-aware trimming and has a max depth safeguard.
-*/
-async function recursivelyReduceSummaries(summaries, maxTokens, depth) {
-	if (depth >= MAX_REDUCTION_DEPTH) return sliceToTokenLimit(summaries.map((s) => s.summary).join("\n"), maxTokens);
-	const engine = getEngine();
-	const batches = [];
-	let currentBatch = [];
-	let currentBatchTokens = 0;
-	for (const summary of summaries) {
-		const summaryTokens = tokenCount(summary.summary);
-		if (currentBatchTokens + summaryTokens > maxTokens / 2 && currentBatch.length > 0) {
-			batches.push(currentBatch);
-			currentBatch = [];
-			currentBatchTokens = 0;
-		}
-		currentBatch.push(summary);
-		currentBatchTokens += summaryTokens;
-	}
-	if (currentBatch.length > 0) batches.push(currentBatch);
-	if (batches.length <= 1) return sliceToTokenLimit(summaries.map((s) => s.summary).join("\n"), maxTokens);
-	const reducedSummaries = [];
-	for (const [i, batch] of batches.entries()) {
-		const batchText = batch.map((s) => s.summary).join("\n");
-		const allFiles = batch.flatMap((s) => s.files);
-		const messages = [SUMMARY_PROMPT, {
-			role: "user",
-			content: `Consolidate these changes into a shorter summary:\n\n${batchText}`
-		}];
-		let reduced = null;
-		let attempts = 0;
-		while (attempts < 3 && !reduced) try {
-			reduced = await engine.generateCommitMessage(messages);
-		} catch {
-			attempts++;
-			if (attempts < 3) await exponentialBackoff(attempts);
-		}
-		reducedSummaries.push({
-			summary: reduced || sliceToTokenLimit(batchText, 500),
-			files: allFiles
-		});
-		if (i < batches.length - 1) await exponentialBackoff(0);
-	}
-	const combinedReduced = reducedSummaries.map((s) => s.summary).join("\n\n");
-	if (tokenCount(combinedReduced) > maxTokens) return recursivelyReduceSummaries(reducedSummaries, maxTokens, depth + 1);
-	return combinedReduced;
 }
 /**
 * Main entry point for generating a commit message from a git diff.
